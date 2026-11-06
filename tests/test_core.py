@@ -535,7 +535,8 @@ class UserTests(unittest.TestCase):
         row=db.candidates(user=1)[0]
         self.assertEqual(row['notified'],row['digest'])
         text=card(row)
-        self.assertIn('Автор: Ана (@ana)',text)
+        self.assertIn(', Ана (@ana)\n',text)
+        self.assertNotIn('Условия и доступность',text)
         self.assertIn('https://a.example',text)
     def test_upgrade_of_single_user_database(self):
         d=tempfile.TemporaryDirectory();self.addCleanup(d.cleanup)

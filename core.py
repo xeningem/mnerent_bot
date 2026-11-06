@@ -624,8 +624,7 @@ def card(row):
     hidden = ('\n★ В избранном' if row['favorite'] else '') + ('\nВы скрыли это объявление' if row['hidden'] else '')
     term = 'сезон' if p.get('seasonal') else 'год' if p.get('annual') else '?'
     return (f"#{row['id']} · {place} · {p['district'] or 'район ?'} · {price} · спальни: {bedrooms} · срок: {term}\n"
-            f"Опубликовано: {row['published'][:10]}\nАвтор: {author}{hidden}{notes}\n"
-            'Условия и доступность уточняйте у автора.\n\n' + row['text'][:1700] +
+            f"{row['published'][:10]}, {author}{hidden}{notes}\n" + row['text'][:1700] +
             ('\n\nСсылки из поста:\n' + '\n'.join(links) if links else '') +
             f"\n\nhttps://t.me/{row['source']}/{row['message_id']}")[:4000]
 
