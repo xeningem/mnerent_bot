@@ -118,6 +118,10 @@ class StorageTests(unittest.TestCase):
             self.assertNotIn('<script>alert',page)
             self.assertIn('&lt;script&gt;',page)
             self.assertIn('Подходящих объявлений нет',export_html([],db.filters(1)))
+    def test_zaljevo_district(self):
+        for text in ('Сдаются апартаменты в районе ZALJEVO, БАР. 2 спальни 400 €','Бар, Заљево, 2 спальни, 400 €','Бар, Залjево 2 спальни 400 €'.replace('j','ј'),'Бар, Zaljevo'):
+            self.assertEqual(parse(text)['district'],'Заљево',text)
+        self.assertNotEqual(parse('Бар, вид на залив, 2 спальни 400 € аренда')['district'],'Заљево')
     def test_parser_reports(self):
         with tempfile.TemporaryDirectory() as d:
             db=Store(d+'/test.db')
