@@ -690,11 +690,11 @@ def card(row):
     notes = ('\n' + '\n'.join('• '+x for x in p['unknown'])) if p['unknown'] else ''
     hidden = ('\n★ В избранном' if row['favorite'] else '') + ('\nВы скрыли это объявление' if row['hidden'] else '')
     term = 'сезон' if p.get('seasonal') else 'год' if p.get('annual') else '?'
-    if field(row, 'price_drop', 0): price += ' ↓'
+    history = [x for x in [repeat_text(row)] + [related_text(row, other) for other in field(row, 'related', ())] if x]
     return (f"#{row['id']} · {place} · {p['district'] or 'район ?'} · {price} · спальни: {bedrooms} · срок: {term}\n"
-            f"{row['published'][:10]}, {author}" + (' · ' + repeat_text(row) if repeat_text(row) else '') + f"{hidden}{notes}"
-            + ''.join('\n' + related_text(row, other) for other in field(row, 'related', ())) + '\n' + row['text'][:1700] +
+            f"{row['published'][:10]}, {author}{hidden}{notes}\n" + row['text'][:1700] +
             ('\n\nСсылки из поста:\n' + '\n'.join(links) if links else '') +
+            ('\n\n' + '\n'.join(history) if history else '') +
             f"\n\nhttps://t.me/{row['source']}/{row['message_id']}")[:4000]
 
 
