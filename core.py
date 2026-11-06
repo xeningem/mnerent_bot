@@ -1,6 +1,7 @@
 """Conservative, dependency-free rental classification and persistent storage."""
 import difflib
 import hashlib
+import html
 import json
 import logging
 import math
@@ -607,3 +608,51 @@ def card(row):
             'Условия и доступность уточняйте у автора.\n\n' + row['text'][:1700] +
             ('\n\nСсылки из поста:\n' + '\n'.join(links) if links else '') +
             f"\n\nhttps://t.me/{row['source']}/{row['message_id']}")[:4000]
+
+
+EXPORT_CSS = """
+:root{color-scheme:light dark;--bg:#fafafa;--fg:#1d1d1f;--mute:#6b6b70;--line:#dcdce0;--card:#fff;--accent:#0a66c2}
+@media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececf0;--mute:#9a9aa2;--line:#33333a;--card:#1f1f23;--accent:#6cb2ff}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:8px 0}.mute{color:var(--mute);font-size:13px}
+article{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
+.head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}.price{font-weight:700;font-size:17px}
+.tags span{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:0 8px;margin:2px 4px 2px 0;font-size:13px}
+details{margin-top:6px}summary{cursor:pointer;color:var(--accent)}pre{white-space:pre-wrap;word-break:break-word;font:inherit;margin:8px 0 0}
+a{color:var(--accent)}ul{margin:6px 0;padding-left:18px}
+"""
+
+def export_html(rows, filters, generated=None):
+    """One self-contained HTML page with every matching listing; pure function of its arguments."""
+    e = html.escape
+    generated = generated or datetime.now(timezone.utc)
+    summary = [f"до {filters['price_max']:g} €" if filters.get('price_max') else None,
+               f"спален от {filters['bedrooms_min']}" if filters.get('bedrooms_min') else None,
+               ', '.join(filters.get('cities') or []) or 'любой город',
+               'срок: ' + TERM_LABELS.get(filters.get('term'), 'любой')]
+    parts = [f'<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+             f'<title>Аренда в Черногории</title><style>{EXPORT_CSS}</style></head><body><main>'
+             f'<h1>Аренда в Черногории: {len(rows)}</h1>'
+             f'<p class="mute">{e(" · ".join(x for x in summary if x))}<br>Сформировано {generated:%Y-%m-%d %H:%M} UTC. '
+             'Условия и доступность уточняйте у автора.</p>']
+    for row in rows:
+        p = json.loads(row['parsed'])
+        price = f"{p['price']:g} €" if p['price'] is not None else 'цена ?'
+        tags = [', '.join(p.get('cities') or []) or 'город ?', p['district'] or 'район ?',
+                f"спальни: {p['bedrooms'] if p['bedrooms'] is not None else '?'}",
+                'сезон' if p.get('seasonal') else 'год' if p.get('annual') else 'срок ?']
+        author = row['author_name'] or (f"id {row['author_id']}" if row['author_id'] else 'неизвестен')
+        if row['author_username']: author += f" (@{row['author_username']})"
+        post = f"https://t.me/{row['source']}/{row['message_id']}"
+        links = [x for x in json.loads(row['links'] or '[]') if len(x) <= 300 and x.startswith(('http://', 'https://'))][:5]
+        notes = ''.join(f'<li>{e(x)}</li>' for x in p['unknown'])
+        parts.append(f'<article><div class="head"><span class="price">{e(price)}</span>'
+                     f'<a href="{e(post)}">#{row["id"]} в Telegram</a><span class="mute">{e(row["published"][:10])} · {e(author)}</span></div>'
+                     f'<div class="tags">{"".join(f"<span>{e(t)}</span>" for t in tags)}</div>'
+                     + (f'<ul>{notes}</ul>' if notes else '')
+                     + f'<details><summary>Текст объявления</summary><pre>{e(row["text"][:3000])}</pre>'
+                     + (''.join(f'<div><a href="{e(x)}">{e(x)}</a></div>' for x in links))
+                     + '</details></article>')
+    if not rows: parts.append('<p>Подходящих объявлений нет.</p>')
+    return ''.join(parts) + '</main></body></html>'

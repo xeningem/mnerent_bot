@@ -6,7 +6,7 @@ import os
 import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from core import ASK_PROMPTS, SOURCES, Store, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, scan_days, scan_due
+from core import ASK_PROMPTS, SOURCES, export_html, Store, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, scan_days, scan_due
 
 log = logging.getLogger('bar-rent')
 PROGRESS_EVERY = 500
@@ -74,7 +74,7 @@ async def bot_call(http, token, method, **payload):
         if not data.get('ok'): raise BotApiError(data.get('error_code'))
         return data['result']
 
-HELP = ('/filters — мои фильтры\n/find — подходящие объявления\n/more — следующая страница\n/status — источники\n'
+HELP = ('/filters — мои фильтры\n/find — подходящие объявления\n/more — следующая страница\n/file — все подходящие одним HTML-файлом\n/status — источники\n'
         '/pause — отключить уведомления\n/resume — включить\nВсе условия и доступность требуют проверки у автора.')
 OWNER_HELP = '\n\nДля владельца:\n/users — статистика пользователей\n/deny ID — заблокировать\n/allow ID — разблокировать\n/reports — посты, отмеченные для проверки парсера'
 NEXT_IN_SETUP = {'p':'bedrooms'}
@@ -88,7 +88,7 @@ async def bot_loop(db, days):
     owner = int(owner)
     db.adopt_owner(owner)
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45)) as http:
-        try: await bot_call(http,token,'setMyCommands',commands=[dict(command=c,description=d) for c,d in (('filters','Мои фильтры'),('find','Подходящие объявления'),('more','Следующая страница'),('status','Источники'),('pause','Отключить уведомления'),('resume','Включить уведомления'))])
+        try: await bot_call(http,token,'setMyCommands',commands=[dict(command=c,description=d) for c,d in (('filters','Мои фильтры'),('find','Подходящие объявления'),('more','Следующая страница'),('file','Все подходящие файлом'),('status','Источники'),('pause','Отключить уведомления'),('resume','Включить уведомления'))])
         except Exception as e: log.warning('Bot: меню команд не обновлено: %s',type(e).__name__)
         async def send(chat, text, buttons=None):
             payload = dict(chat_id=chat,text=text,link_preview_options={'is_disabled':True})
@@ -139,6 +139,15 @@ async def bot_loop(db, days):
                 await open_screen(uid,'main' if db.user(uid)['started'] else 'cities')
             elif cmd in ('/find','/more'):
                 await find(uid,0 if cmd=='/find' else db.user(uid)['page']+1)
+            elif cmd=='/file':
+                rows = db.candidates(days,user=uid)
+                if not rows: await send(uid,'Пока нет кандидатов. Проверь /filters и /status.'); return
+                form = aiohttp.FormData()
+                form.add_field('chat_id',str(uid))
+                form.add_field('caption',f'Подходящих объявлений: {len(rows)}')
+                form.add_field('document',export_html(rows,db.filters(uid)).encode(),filename=f'rent-{datetime.now(timezone.utc):%Y%m%d}.html',content_type='text/html')
+                async with http.post(f'https://api.telegram.org/bot{token}/sendDocument',data=form) as r:
+                    if r.status!=200: log.warning('Bot: sendDocument не удался: %s',r.status)
             elif cmd=='/filters':
                 await open_screen(uid,'main')
             elif cmd=='/status':

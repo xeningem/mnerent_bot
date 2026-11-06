@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace as NS
-from core import CITY_NAMES, DEFAULT_FILTERS, DISTRICTS, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, parse, parse_prices, scan_days, scan_due, Store
+from core import CITY_NAMES, DEFAULT_FILTERS, DISTRICTS, export_html, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, parse, parse_prices, scan_days, scan_due, Store
 
 BAR={**DEFAULT_FILTERS,'cities':['Бар']}
 
@@ -104,6 +104,20 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(db.last_id('aarenda'),0)
             db.put('aarenda',5,now,'один');db.put('aarenda',9,now,'два');db.put('saleme_realty',100,now,'три')
             self.assertEqual(db.last_id('aarenda'),9)
+    def test_export_html(self):
+        with tempfile.TemporaryDirectory() as d:
+            db=Store(d+'/test.db')
+            now=datetime.now(timezone.utc).isoformat()
+            db.put('aarenda',7,now,'Бар. Полье, 2 спальни 700 € аренда на год <script>alert(1)</script>')
+            db.ensure_user(1)
+            rows=db.candidates(14,user=1)
+            self.assertEqual(len(rows),1)
+            page=export_html(rows,db.filters(1))
+            self.assertIn('https://t.me/aarenda/7',page)
+            self.assertIn('700 €',page)
+            self.assertNotIn('<script>alert',page)
+            self.assertIn('&lt;script&gt;',page)
+            self.assertIn('Подходящих объявлений нет',export_html([],db.filters(1)))
     def test_parser_reports(self):
         with tempfile.TemporaryDirectory() as d:
             db=Store(d+'/test.db')
