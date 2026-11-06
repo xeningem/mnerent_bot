@@ -617,7 +617,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans
 main{max-width:860px;margin:0 auto;padding:16px}
 h1{font-size:20px;margin:8px 0}.mute{color:var(--mute);font-size:13px}
 article{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
-.head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}.price{font-weight:700;font-size:17px}
+.head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}.head .mute{font-size:12px}.price{font-weight:700;font-size:17px}
 .tags span{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:0 8px;margin:2px 4px 2px 0;font-size:13px}
 details{margin-top:6px}summary{cursor:pointer;color:var(--accent)}pre{white-space:pre-wrap;word-break:break-word;font:inherit;margin:8px 0 0}
 a{color:var(--accent)}ul{margin:6px 0;padding-left:18px}
@@ -661,7 +661,7 @@ def export_html(rows, filters, generated=None):
         links = [x for x in json.loads(row['links'] or '[]') if len(x) <= 300 and x.startswith(('http://', 'https://'))][:5]
         notes = ''.join(f'<li>{e(x)}</li>' for x in p['unknown'])
         parts.append(f'<article><div class="head"><span class="price">{e(price)}</span>'
-                     f'<a href="{e(post)}">#{row["id"]} в Telegram</a><span class="mute">{e(row["published"][:10])} · {e(author)}</span></div>'
+                     f'<a href="{e(post)}">Открыть в Telegram ({e(row["source"])})</a><span class="mute">{e(row["published"][:10])} · #{row["id"]} · {e(author)}</span></div>'
                      f'<div class="tags">{"".join(f"<span>{e(t)}</span>" for t in tags)}</div>'
                      + (f'<ul>{notes}</ul>' if notes else '')
                      + f'<details><summary>Текст объявления</summary><pre>{e(row["text"][:3000])}</pre>'

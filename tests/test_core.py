@@ -115,6 +115,8 @@ class StorageTests(unittest.TestCase):
             page=export_html(rows,db.filters(1))
             self.assertIn('https://t.me/aarenda/7',page)
             self.assertIn('700 €',page)
+            self.assertIn('Открыть в Telegram (aarenda)',page)
+            self.assertIn(' · #1 · ',page)
             self.assertNotIn('<script>alert',page)
             self.assertIn('&lt;script&gt;',page)
             self.assertIn('id="toggle"',page)
