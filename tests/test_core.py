@@ -211,6 +211,21 @@ class StorageTests(unittest.TestCase):
             twin['absorbed']=[old]            # the pool entry stands for an older copy that is related to `now`
             found=db.annotate([now],pool=[now,twin])[0]['related']
             self.assertEqual([r['id'] for r in found],[1])
+    def test_kruce_is_ulcinj_and_leaves_bar_filter(self):
+        text='Предлагается в аренду уютный дом с 3 спальнями в Круче с видом на море. До Бара 15 мин. на авто, до Улциня 10 мин. 600 евро в месяц, аренда на год.'
+        p=parse(text)
+        self.assertEqual((p['cities'],p['district']),(['Ульцинь'],'Круче'))
+        self.assertTrue(filter_reasons(p,BAR,text))                       # a Bar search drops it
+        self.assertFalse(filter_reasons(p,{**BAR,'cities':['Ульцинь']},text))
+        hashtag=parse('#Аренда #Дом #Бар #Круче #Спальни_5 800 € в месяц, просторный трёхэтажный дом на год')
+        self.assertEqual((hashtag['cities'],hashtag['district']),(['Ульцинь'],'Круче'))
+        # "круче" as a plain word is not a place.
+        self.assertIsNone(parse('Квартира в Баре, 2 спальни, 500 евро в месяц, аренда на год, круче чем у соседей')['district'])
+        # A named district decides the city; other cities are only nearby.
+        near=parse('Шушань, 2 спальни, 450 евро в месяц, аренда на год, до Котора 40 минут')
+        self.assertEqual((near['cities'],near['district']),(['Бар'],'Шушань'))
+        # Without a district, several cities stay and are flagged as before.
+        self.assertEqual(len(parse('Бар или Будва, 2 спальни, 450 евро в месяц')['cities']),2)
     def test_parser_reports(self):
         with tempfile.TemporaryDirectory() as d:
             db=Store(d+'/test.db')

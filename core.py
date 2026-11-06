@@ -15,7 +15,7 @@ log = logging.getLogger('bar-rent')
 SOURCES = ['realestate_bar', 'aarenda', 'saleme_realty', 'onerealestatemontenegro', 'abi_mne_realty', 'Montenegro_sell_rent']
 
 # Bump to recalculate stored posts on the next start when parse() output gains a field.
-PARSE_VERSION = '19'
+PARSE_VERSION = '20'
 
 # The group is dedicated to Bar, so its posts often omit the city name.
 BAR_SOURCES = {'realestate_bar'}
@@ -52,7 +52,7 @@ DISTRICTS = {
     'Подгорица': [('Центр', CENTER), ('Забело', r'забел[оеу]\b|zabjel'), ('Блок', r'\bблок\s*\d|\bblok\s*\d'), ('Преко Мораче', r'преко\s+морач|preko\s+morac'), ('Старый аэродром', r'стар\w+\s+а[еэ]родром|stari\s+aerodrom'), ('City Kvart', r'сити\s+кварт|city\s+kvart'), ('Горица', r'\bгорица\b|\bgorica\b')],
     'Херцег-Нови': [('Центр', CENTER), ('Старый город', OLD_TOWN), ('Игало', r'игало|igalo'), ('Топла', r'\bтопл[аеу]\b|\btopla\b'), ('Савина', r'\bсавин[аеу]\b|\bsavina\b'), ('Мельине', r'мельин|мелин[ея]\b|meljin'),
                     ('Биела', r'\bбиел[аеуы]\b|\bbijela\b'), ('Кумбор', r'кумбор|kumbor'), ('Дженовичи', r'дженович|djenovic|đenovic'), ('Баошичи', r'баошич|baosic'), ('Зеленика', r'зеленик[аеу]\b|\bzelenika\b')],
-    'Ульцинь': [('Центр', CENTER), ('Старый город', OLD_TOWN), ('Пинеш', r'пинеш|pinjes'), ('Штой', r'\bштой\b|\bstoj\b')],
+    'Ульцинь': [('Центр', CENTER), ('Старый город', OLD_TOWN), ('Пинеш', r'пинеш|pinjes'), ('Штой', r'\bштой\b|\bstoj\b'), ('Круче', r'\bkru[cč]e\b|(?:#|район\w*\s+|р-н\s+|в\s+|поселк\w*\s+|село\s+)круче\b')],
 }
 CITIES = [('Бар', r'\bбар(?:е|а|у)?\b|\bбарск|\bbar\b|шушан|сушан|susanj|\bильин|\bилин|\bilino'), ('Будва', r'будв|budva'), ('Тиват', r'тиват|tivat'),
           ('Котор', r'котор|kotor'), ('Подгорица', r'подгориц|podgoric'), ('Сутоморе', r'сутомор|sutomore'), ('Добра Вода', r'добра\s?вода|dobra\s?voda'),
@@ -127,6 +127,9 @@ def parse(text, bar_source=False):
     # A post may name several districts, and any of them can be the one a user wants.
     areas = {city: [name for name, pattern in items if name not in GENERIC_DISTRICTS and re.search(pattern, t)] for city, items in DISTRICTS.items()}
     cities = [name for name, pattern in CITIES if re.search(pattern, t) or areas.get(name)]
+    # A district named in the post says where the flat is; "15 мин до Бара" or a #Бар tag only says what is nearby.
+    located = [city for city in cities if areas.get(city)]
+    if located: cities = located
     if bar_source and not cities:
         cities = ['Бар']
         unknown.append('Бар понятен только из тематики группы')
