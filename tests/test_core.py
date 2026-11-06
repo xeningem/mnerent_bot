@@ -190,6 +190,12 @@ class StorageTests(unittest.TestCase):
             self.assertIn('повторов: 2, впервые '+day(7)[:10],text)
             self.assertIn('498 € → 350 € (-148)',text)
             self.assertIn('Похожее #',text)
+            self.assertEqual(top['price_drop'],148)
+            self.assertIn('350 € ↓',text.split('\n')[0])
+            self.assertEqual(rows[1]['price_drop'],0)      # the older, dearer post is not a drop
+            self.assertNotIn('↓',card(rows[1]).split('\n')[0])
+            self.assertEqual([r['id'] for r in db.export_rows(1,30)][0],top['id'])
+            self.assertIn('data-drop="148"',export_html(db.export_rows(1,30),db.filters(1)))
             page=export_html([top],db.filters(1))
             self.assertIn('498 € → 350 € (-148)',page)
             self.assertIn('повторов: 2',page)

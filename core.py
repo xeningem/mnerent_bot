@@ -586,6 +586,9 @@ class Store:
                 match = next((x for x in (o, *o.get('absorbed', ())) for m in members if related_listing(m, x)), None)
                 if match: related.append(dict(id=match['id'],published=match['published'],source=match['source'],message_id=match['message_id'],price=json.loads(match['parsed'])['price']))
             row['related'] = sorted(related, key=lambda r: r['published'], reverse=True)[:3]
+            mine = json.loads(row['parsed'])['price']
+            # The biggest fall against an older similar post; 0 when there is none. A hint: a neighbouring flat of the template looks the same.
+            row['price_drop'] = max([r['price'] - mine for r in related if mine is not None and r['price'] is not None and r['published'] < row['published'] and r['price'] > mine], default=0)
             result.append(row)
         return result
     def favorites(self, user):
@@ -596,7 +599,8 @@ class Store:
         rows = self.candidates(days,user=user)
         have = {row['id'] for row in rows}
         rows = rows + [row for row in self.favorites(user) if row['id'] not in have]
-        return self.annotate(sorted(rows,key=lambda row: row['published'],reverse=True))
+        rows = self.annotate(sorted(rows,key=lambda row: row['published'],reverse=True))
+        return sorted(rows,key=lambda row: -row['price_drop'])
     def set_favorite(self, user, pid, flag):
         if not self.db.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): return False
         self.db.execute('INSERT INTO user_posts(user_id,post_id,favorite) VALUES(?,?,?) ON CONFLICT(user_id,post_id) DO UPDATE SET favorite=excluded.favorite',(user,pid,int(bool(flag))))
@@ -683,6 +687,7 @@ def card(row):
     notes = ('\n' + '\n'.join('• '+x for x in p['unknown'])) if p['unknown'] else ''
     hidden = ('\n★ В избранном' if row['favorite'] else '') + ('\nВы скрыли это объявление' if row['hidden'] else '')
     term = 'сезон' if p.get('seasonal') else 'год' if p.get('annual') else '?'
+    if field(row, 'price_drop', 0): price += ' ↓'
     return (f"#{row['id']} · {place} · {p['district'] or 'район ?'} · {price} · спальни: {bedrooms} · срок: {term}\n"
             f"{row['published'][:10]}, {author}" + (' · ' + repeat_text(row) if repeat_text(row) else '') + f"{hidden}{notes}"
             + ''.join('\n' + related_text(row, other) for other in field(row, 'related', ())) + '\n' + row['text'][:1700] +
@@ -697,7 +702,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans
 main{max-width:860px;margin:0 auto;padding:16px}
 h1{font-size:20px;margin:8px 0}.mute{color:var(--mute);font-size:13px}
 article{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
-article.fav{border-color:var(--star)}.star{color:var(--star)}
+article.fav{border-color:var(--star)}.star{color:var(--star)}.drop{color:#1a8f3c}
 .head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}.head .mute{font-size:12px}.price{font-weight:700;font-size:17px}
 .tags span{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:0 8px;margin:2px 4px 2px 0;font-size:13px}
 details{margin-top:6px}summary{cursor:pointer;color:var(--accent)}pre{white-space:pre-wrap;word-break:break-word;font:inherit;margin:8px 0 0}
@@ -711,6 +716,7 @@ button{cursor:pointer}input[type=search]{flex:1 1 180px;min-width:0}label{white-
 EXPORT_JS = """
 const list = document.getElementById('list'), cards = [...list.children], $ = id => document.getElementById(id);
 const sorts = {
+  drop: (a, b) => b.dataset.drop - a.dataset.drop || b.dataset.date.localeCompare(a.dataset.date),
   new: (a, b) => b.dataset.date.localeCompare(a.dataset.date),
   cheap: (a, b) => (a.dataset.price === '') - (b.dataset.price === '') || a.dataset.price - b.dataset.price,
   dear: (a, b) => (a.dataset.price === '') - (b.dataset.price === '') || b.dataset.price - a.dataset.price,
@@ -762,7 +768,7 @@ def export_html(rows, filters, generated=None):
              + f'<br>Сформировано {generated:%Y-%m-%d %H:%M} UTC. Условия и доступность уточняйте у автора.</p>']
     if rows:
         parts.append('<div class="bar" id="bar" hidden><input type="search" id="q" placeholder="Поиск по тексту">'
-                     '<select id="sort" aria-label="Сортировка"><option value="new">Сначала новые</option><option value="cheap">Сначала дешевле</option>'
+                     '<select id="sort" aria-label="Сортировка"><option value="drop">Со снижением цены сверху</option><option value="new">Сначала новые</option><option value="cheap">Сначала дешевле</option>'
                      '<option value="dear">Сначала дороже</option><option value="beds">Больше спален</option></select>'
                      '<select id="district" aria-label="Район"><option value="">Любой район</option>'
                      + ''.join(f'<option>{e(d)}</option>' for d in districts) + '</select>'
@@ -786,9 +792,9 @@ def export_html(rows, filters, generated=None):
         price_attr = '' if p['price'] is None else f"{p['price']:g}"
         data = (f' data-i="{index}" data-date="{e(row["published"])}" data-price="{price_attr}"'
                 f' data-beds="{"" if p["bedrooms"] is None else p["bedrooms"]}" data-district="{e(p["district"] or "")}"'
-                f' data-term="{term}" data-fav="{int(fav)}"')
+                f' data-term="{term}" data-fav="{int(fav)}" data-drop="{field(row, "price_drop", 0):g}"')
         parts.append(f'<article{" class=fav" if fav else ""}{data}><div class="head">'
-                     f'<span class="price">{"<span class=star>★</span> " if fav else ""}{e(price)}</span>'
+                     f'<span class="price">{"<span class=star>★</span> " if fav else ""}{e(price)}{" <span class=drop title=&quot;Похожий пост был дороже&quot;>↓</span>" if field(row, "price_drop", 0) else ""}</span>'
                      f'<a href="{e(post)}">Открыть в Telegram ({e(row["source"])})</a>'
                      f'<span class="mute">{e(row["published"][:10])} · #{row["id"]} · {e(author)}{" · " + e(repeat_text(row)) if repeat_text(row) else ""}</span></div>'
                      f'<div class="tags">{"".join(f"<span>{e(t)}</span>" for t in tags)}</div>'

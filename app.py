@@ -114,9 +114,10 @@ async def bot_loop(db, days):
             await send(uid,'Готово. Новые подходящие объявления будут приходить сюда.\n\n'+HELP)
             await open_screen(uid,'main')
         async def find(uid, page):
-            rows = db.candidates(days,user=uid)
+            # Reposts with a lower price than a similar older post go first; the sort is stable, so the rest stays newest first.
+            rows = sorted(db.annotate(db.candidates(days,user=uid)),key=lambda row: -row['price_drop'])
             size = db.filters(uid)['page_size']
-            for row in db.annotate(rows[page*size:(page+1)*size],pool=rows): await show(uid,row)
+            for row in rows[page*size:(page+1)*size]: await show(uid,row)
             db.set_user(uid,page=page)
             await send(uid,f'Кандидатов: {len(rows)}. Страница {page+1}. /more — дальше.' if rows else 'Пока нет кандидатов. Проверь /filters и /status.')
         async def typed_value(uid, kind, text):
