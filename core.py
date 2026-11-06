@@ -621,6 +621,18 @@ article{background:var(--card);border:1px solid var(--line);border-radius:10px;p
 .tags span{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:0 8px;margin:2px 4px 2px 0;font-size:13px}
 details{margin-top:6px}summary{cursor:pointer;color:var(--accent)}pre{white-space:pre-wrap;word-break:break-word;font:inherit;margin:8px 0 0}
 a{color:var(--accent)}ul{margin:6px 0;padding-left:18px}
+button{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:4px 12px;cursor:pointer}
+"""
+
+EXPORT_JS = """
+const all = document.querySelectorAll('details'), btn = document.getElementById('toggle');
+btn.hidden = false;
+btn.onclick = () => {
+  const open = btn.dataset.open !== '1';
+  all.forEach(d => d.open = open);
+  btn.dataset.open = open ? '1' : '';
+  btn.textContent = open ? 'Свернуть все' : 'Развернуть все';
+};
 """
 
 def export_html(rows, filters, generated=None):
@@ -635,7 +647,8 @@ def export_html(rows, filters, generated=None):
              f'<title>Аренда в Черногории</title><style>{EXPORT_CSS}</style></head><body><main>'
              f'<h1>Аренда в Черногории: {len(rows)}</h1>'
              f'<p class="mute">{e(" · ".join(x for x in summary if x))}<br>Сформировано {generated:%Y-%m-%d %H:%M} UTC. '
-             'Условия и доступность уточняйте у автора.</p>']
+             'Условия и доступность уточняйте у автора.</p>'
+             + ('<p><button id="toggle" hidden>Развернуть все</button></p>' if rows else '')]
     for row in rows:
         p = json.loads(row['parsed'])
         price = f"{p['price']:g} €" if p['price'] is not None else 'цена ?'
@@ -655,4 +668,4 @@ def export_html(rows, filters, generated=None):
                      + (''.join(f'<div><a href="{e(x)}">{e(x)}</a></div>' for x in links))
                      + '</details></article>')
     if not rows: parts.append('<p>Подходящих объявлений нет.</p>')
-    return ''.join(parts) + '</main></body></html>'
+    return ''.join(parts) + '</main>' + (f'<script>{EXPORT_JS}</script>' if rows else '') + '</body></html>'

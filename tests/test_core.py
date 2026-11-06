@@ -117,6 +117,8 @@ class StorageTests(unittest.TestCase):
             self.assertIn('700 €',page)
             self.assertNotIn('<script>alert',page)
             self.assertIn('&lt;script&gt;',page)
+            self.assertIn('id="toggle"',page)
+            self.assertNotIn('id="toggle"',export_html([],db.filters(1)))
             self.assertIn('Подходящих объявлений нет',export_html([],db.filters(1)))
     def test_zaljevo_district(self):
         for text in ('Сдаются апартаменты в районе ZALJEVO, БАР. 2 спальни 400 €','Бар, Заљево, 2 спальни, 400 €','Бар, Залjево 2 спальни 400 €'.replace('j','ј'),'Бар, Zaljevo'):
