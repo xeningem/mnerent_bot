@@ -18,6 +18,7 @@ python app.py login    # интерактивный вход в Telegram, пок
 python app.py scan     # однократный сбор без бота
 python app.py export   # кандидаты владельца в JSON (stdout), с его фильтрами; --all добавляет отклонённые
 python app.py reparse  # пересчитать parse() для уже собранных записей
+scripts/backup.sh      # копия базы, сессии и .env в ~/Backups/mnerent_bot (KEEP=14 последних)
 python app.py run      # сбор и бот; параметры: --days 14 --interval 600 --rescan-days 3 --deep-hours 6
 ```
 
