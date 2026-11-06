@@ -393,7 +393,7 @@ class Store:
           paused INTEGER DEFAULT 0, page INTEGER DEFAULT 0, notify_after TEXT DEFAULT '',
           created TEXT DEFAULT '', blocked INTEGER DEFAULT 0, awaiting TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS user_posts(
-          user_id INTEGER, post_id INTEGER, hidden INTEGER DEFAULT 0, notified TEXT,
+          user_id INTEGER, post_id INTEGER, hidden INTEGER DEFAULT 0, notified TEXT, favorite INTEGER DEFAULT 0,
           PRIMARY KEY(user_id,post_id));
         CREATE INDEX IF NOT EXISTS user_posts_post ON user_posts(post_id);
         CREATE TABLE IF NOT EXISTS parser_reports(post_id INTEGER PRIMARY KEY, created TEXT, parsed TEXT, comment TEXT DEFAULT '');
@@ -404,6 +404,8 @@ class Store:
             if name not in user_columns: self.db.execute(f'ALTER TABLE users ADD COLUMN {name} {definition}')
         if 'comment' not in {row['name'] for row in self.db.execute('PRAGMA table_info(parser_reports)')}:
             self.db.execute("ALTER TABLE parser_reports ADD COLUMN comment TEXT DEFAULT ''")
+        if 'favorite' not in {row['name'] for row in self.db.execute('PRAGMA table_info(user_posts)')}:
+            self.db.execute('ALTER TABLE user_posts ADD COLUMN favorite INTEGER DEFAULT 0')
         self.db.commit()
         if 'confirmed' in {row['name'] for row in self.db.execute('PRAGMA table_info(user_posts)')}:
             self.db.execute('ALTER TABLE user_posts DROP COLUMN confirmed')
@@ -528,7 +530,7 @@ class Store:
         self.db.commit()
     def visible(self, user, extra='', params=(), show_hidden=False):
         hidden = '' if show_hidden else 'COALESCE(u.hidden,0)=0 AND '
-        return self.db.execute('SELECT ' + POST_FIELDS + ',COALESCE(u.hidden,0) AS hidden,u.notified FROM posts p LEFT JOIN user_posts u ON u.post_id=p.id AND u.user_id=? WHERE ' + hidden + 'p.published>=? ' + extra + ' ORDER BY p.published DESC', params).fetchall()
+        return self.db.execute('SELECT ' + POST_FIELDS + ',COALESCE(u.hidden,0) AS hidden,COALESCE(u.favorite,0) AS favorite,u.notified FROM posts p LEFT JOIN user_posts u ON u.post_id=p.id AND u.user_id=? WHERE ' + hidden + 'p.published>=? ' + extra + ' ORDER BY p.published DESC', params).fetchall()
     def candidates(self, days=14, include_rejected=False, user=None):
         cutoff = (datetime.now(timezone.utc)-timedelta(days=days)).isoformat()
         filters = self.filters(user)
@@ -541,6 +543,23 @@ class Store:
             if any(same_listing(row, other) for other in result if other['author_id'] is not None and other['author_id'] == row['author_id']): continue
             result.append(row)
         return result
+    def favorites(self, user):
+        """Posts the user starred, newest first. Filters, hiding and age do not apply: a star is an explicit choice."""
+        return self.visible(user,'AND COALESCE(u.favorite,0)=1',(user,'0'),True)
+    def export_rows(self, user, days=14):
+        """Everything /find would show plus the user's favorites, so a starred listing never drops out of the file."""
+        rows = self.candidates(days,user=user)
+        have = {row['id'] for row in rows}
+        rows = rows + [row for row in self.favorites(user) if row['id'] not in have]
+        return sorted(rows,key=lambda row: row['published'],reverse=True)
+    def set_favorite(self, user, pid, flag):
+        if not self.db.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): return False
+        self.db.execute('INSERT INTO user_posts(user_id,post_id,favorite) VALUES(?,?,?) ON CONFLICT(user_id,post_id) DO UPDATE SET favorite=excluded.favorite',(user,pid,int(bool(flag))))
+        self.db.commit()
+        return True
+    def is_favorite(self, user, pid):
+        row = self.db.execute('SELECT favorite FROM user_posts WHERE user_id=? AND post_id=?',(user,pid)).fetchone()
+        return bool(row and row['favorite'])
     def pending(self, user, days, boundary):
         """Matching posts this user has not been sent. Rechecks refresh `seen`, so `changed` decides."""
         cutoff = (datetime.now(timezone.utc)-timedelta(days=days)).isoformat()
@@ -578,7 +597,7 @@ class Store:
         self.db.commit()
         return True
     def reports(self, user=None):
-        return self.db.execute('SELECT ' + POST_FIELDS + ',COALESCE(u.hidden,0) AS hidden,u.notified,r.created AS reported,r.parsed AS parsed_then,r.comment AS comment FROM parser_reports r JOIN posts p ON p.id=r.post_id LEFT JOIN user_posts u ON u.post_id=p.id AND u.user_id=? ORDER BY r.created',(user,)).fetchall()
+        return self.db.execute('SELECT ' + POST_FIELDS + ',COALESCE(u.hidden,0) AS hidden,COALESCE(u.favorite,0) AS favorite,u.notified,r.created AS reported,r.parsed AS parsed_then,r.comment AS comment FROM parser_reports r JOIN posts p ON p.id=r.post_id LEFT JOIN user_posts u ON u.post_id=p.id AND u.user_id=? ORDER BY r.created',(user,)).fetchall()
     def action(self, user, pid, action):
         if not self.db.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): return False
         value = int(action == 'hide')
@@ -586,11 +605,12 @@ class Store:
         self.db.commit()
         return True
 
-def card_buttons(pid, hidden, reported=None):
-    """reported is None for users who cannot flag posts; the owner gets a second button."""
-    row = [button('Вернуть', f'unhide:{pid}') if hidden else button('Скрыть', f'hide:{pid}')]
-    if reported is not None: row.append(button('✓ На проверке' if reported else 'На проверку парсера', f'unreport:{pid}' if reported else f'report:{pid}'))
-    return [row]
+def card_buttons(pid, hidden, reported=None, favorite=False):
+    """reported is None for users who cannot flag posts; the owner gets a second row with that button."""
+    rows = [[button('★ В избранном' if favorite else '☆ В избранное', f'unfav:{pid}' if favorite else f'fav:{pid}'),
+             button('Вернуть', f'unhide:{pid}') if hidden else button('Скрыть', f'hide:{pid}')]]
+    if reported is not None: rows.append([button('✓ На проверке' if reported else 'На проверку парсера', f'unreport:{pid}' if reported else f'report:{pid}')])
+    return rows
 
 def card(row):
     p = json.loads(row['parsed'])
@@ -601,7 +621,7 @@ def card(row):
     links = [link for link in json.loads(row['links'] or '[]') if len(link) <= 300][:5]
     place = ', '.join(p.get('cities') or []) or 'город ?'
     notes = ('\n' + '\n'.join('• '+x for x in p['unknown'])) if p['unknown'] else ''
-    hidden = '\nВы скрыли это объявление' if row['hidden'] else ''
+    hidden = ('\n★ В избранном' if row['favorite'] else '') + ('\nВы скрыли это объявление' if row['hidden'] else '')
     term = 'сезон' if p.get('seasonal') else 'год' if p.get('annual') else '?'
     return (f"#{row['id']} · {place} · {p['district'] or 'район ?'} · {price} · спальни: {bedrooms} · срок: {term}\n"
             f"Опубликовано: {row['published'][:10]}\nАвтор: {author}{hidden}{notes}\n"
@@ -611,61 +631,111 @@ def card(row):
 
 
 EXPORT_CSS = """
-:root{color-scheme:light dark;--bg:#fafafa;--fg:#1d1d1f;--mute:#6b6b70;--line:#dcdce0;--card:#fff;--accent:#0a66c2}
-@media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececf0;--mute:#9a9aa2;--line:#33333a;--card:#1f1f23;--accent:#6cb2ff}}
+:root{color-scheme:light dark;--bg:#fafafa;--fg:#1d1d1f;--mute:#6b6b70;--line:#dcdce0;--card:#fff;--accent:#0a66c2;--star:#e0a000}
+@media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececf0;--mute:#9a9aa2;--line:#33333a;--card:#1f1f23;--accent:#6cb2ff;--star:#f2c038}}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
 main{max-width:860px;margin:0 auto;padding:16px}
 h1{font-size:20px;margin:8px 0}.mute{color:var(--mute);font-size:13px}
 article{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
+article.fav{border-color:var(--star)}.star{color:var(--star)}
 .head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}.head .mute{font-size:12px}.price{font-weight:700;font-size:17px}
 .tags span{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:0 8px;margin:2px 4px 2px 0;font-size:13px}
 details{margin-top:6px}summary{cursor:pointer;color:var(--accent)}pre{white-space:pre-wrap;word-break:break-word;font:inherit;margin:8px 0 0}
 a{color:var(--accent)}ul{margin:6px 0;padding-left:18px}
-button{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:4px 12px;cursor:pointer}
+.bar{position:sticky;top:0;z-index:1;background:var(--bg);padding:8px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-bottom:1px solid var(--line)}
+.bar[hidden]{display:none}
+button,select,input[type=search]{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:4px 10px}
+button{cursor:pointer}input[type=search]{flex:1 1 180px;min-width:0}label{white-space:nowrap}
 """
 
 EXPORT_JS = """
-const all = document.querySelectorAll('details'), btn = document.getElementById('toggle');
-btn.hidden = false;
-btn.onclick = () => {
-  const open = btn.dataset.open !== '1';
-  all.forEach(d => d.open = open);
-  btn.dataset.open = open ? '1' : '';
-  btn.textContent = open ? 'Свернуть все' : 'Развернуть все';
+const list = document.getElementById('list'), cards = [...list.children], $ = id => document.getElementById(id);
+const sorts = {
+  new: (a, b) => b.dataset.date.localeCompare(a.dataset.date),
+  cheap: (a, b) => (a.dataset.price === '') - (b.dataset.price === '') || a.dataset.price - b.dataset.price,
+  dear: (a, b) => (a.dataset.price === '') - (b.dataset.price === '') || b.dataset.price - a.dataset.price,
+  beds: (a, b) => (a.dataset.beds === '') - (b.dataset.beds === '') || b.dataset.beds - a.dataset.beds,
 };
+function apply() {
+  const words = $('q').value.toLowerCase().split(/\\s+/).filter(Boolean);
+  const district = $('district').value, term = $('term').value, favOnly = $('favonly').checked;
+  const order = [...cards].sort((a, b) => sorts[$('sort').value](a, b) || a.dataset.i - b.dataset.i);
+  let shown = 0;
+  for (const card of order) {
+    const text = card.textContent.toLowerCase();
+    const ok = words.every(w => text.includes(w)) && (!district || card.dataset.district === district)
+      && (!term || card.dataset.term === term) && (!favOnly || card.dataset.fav === '1');
+    card.hidden = !ok;
+    shown += ok;
+    list.append(card);
+  }
+  $('count').textContent = 'Показано ' + shown + ' из ' + cards.length;
+}
+const toggle = $('toggle');
+toggle.onclick = () => {
+  const open = toggle.dataset.open !== '1';
+  document.querySelectorAll('details').forEach(d => d.open = open);
+  toggle.dataset.open = open ? '1' : '';
+  toggle.textContent = open ? 'Свернуть все' : 'Развернуть все';
+};
+for (const id of ['q', 'sort', 'district', 'term', 'favonly']) $(id).addEventListener('input', apply);
+$('bar').hidden = false;
+apply();
 """
 
 def export_html(rows, filters, generated=None):
-    """One self-contained HTML page with every matching listing; pure function of its arguments."""
+    """One self-contained HTML page with every listing it is given; pure function of its arguments."""
     e = html.escape
     generated = generated or datetime.now(timezone.utc)
     summary = [f"до {filters['price_max']:g} €" if filters.get('price_max') else None,
                f"спален от {filters['bedrooms_min']}" if filters.get('bedrooms_min') else None,
                ', '.join(filters.get('cities') or []) or 'любой город',
                'срок: ' + TERM_LABELS.get(filters.get('term'), 'любой')]
+    parsed = [json.loads(row['parsed']) for row in rows]
+    districts = sorted({p['district'] for p in parsed if p['district']})
+    stars = sum(1 for row in rows if row['favorite'])
     parts = [f'<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
              f'<title>Аренда в Черногории</title><style>{EXPORT_CSS}</style></head><body><main>'
              f'<h1>Аренда в Черногории: {len(rows)}</h1>'
-             f'<p class="mute">{e(" · ".join(x for x in summary if x))}<br>Сформировано {generated:%Y-%m-%d %H:%M} UTC. '
-             'Условия и доступность уточняйте у автора.</p>'
-             + ('<p><button id="toggle" hidden>Развернуть все</button></p>' if rows else '')]
-    for row in rows:
-        p = json.loads(row['parsed'])
+             f'<p class="mute">{e(" · ".join(x for x in summary if x))}'
+             + (f' · <span class="star">★</span> в избранном: {stars}' if stars else '')
+             + f'<br>Сформировано {generated:%Y-%m-%d %H:%M} UTC. Условия и доступность уточняйте у автора.</p>']
+    if rows:
+        parts.append('<div class="bar" id="bar" hidden><input type="search" id="q" placeholder="Поиск по тексту">'
+                     '<select id="sort" aria-label="Сортировка"><option value="new">Сначала новые</option><option value="cheap">Сначала дешевле</option>'
+                     '<option value="dear">Сначала дороже</option><option value="beds">Больше спален</option></select>'
+                     '<select id="district" aria-label="Район"><option value="">Любой район</option>'
+                     + ''.join(f'<option>{e(d)}</option>' for d in districts) + '</select>'
+                     '<select id="term" aria-label="Срок"><option value="">Любой срок</option><option value="year">Год</option>'
+                     '<option value="season">Сезон</option><option value="unknown">Срок не указан</option></select>'
+                     '<label><input type="checkbox" id="favonly"> Только ★</label>'
+                     '<button id="toggle">Развернуть все</button><span class="mute" id="count"></span></div>')
+    parts.append('<div id="list">')
+    for index, (row, p) in enumerate(zip(rows, parsed)):
         price = f"{p['price']:g} €" if p['price'] is not None else 'цена ?'
+        term = 'season' if p.get('seasonal') else 'year' if p.get('annual') else 'unknown'
         tags = [', '.join(p.get('cities') or []) or 'город ?', p['district'] or 'район ?',
                 f"спальни: {p['bedrooms'] if p['bedrooms'] is not None else '?'}",
-                'сезон' if p.get('seasonal') else 'год' if p.get('annual') else 'срок ?']
+                {'season': 'сезон', 'year': 'год', 'unknown': 'срок ?'}[term]]
         author = row['author_name'] or (f"id {row['author_id']}" if row['author_id'] else 'неизвестен')
         if row['author_username']: author += f" (@{row['author_username']})"
         post = f"https://t.me/{row['source']}/{row['message_id']}"
         links = [x for x in json.loads(row['links'] or '[]') if len(x) <= 300 and x.startswith(('http://', 'https://'))][:5]
         notes = ''.join(f'<li>{e(x)}</li>' for x in p['unknown'])
-        parts.append(f'<article><div class="head"><span class="price">{e(price)}</span>'
-                     f'<a href="{e(post)}">Открыть в Telegram ({e(row["source"])})</a><span class="mute">{e(row["published"][:10])} · #{row["id"]} · {e(author)}</span></div>'
+        fav = bool(row['favorite'])
+        price_attr = '' if p['price'] is None else f"{p['price']:g}"
+        data = (f' data-i="{index}" data-date="{e(row["published"])}" data-price="{price_attr}"'
+                f' data-beds="{"" if p["bedrooms"] is None else p["bedrooms"]}" data-district="{e(p["district"] or "")}"'
+                f' data-term="{term}" data-fav="{int(fav)}"')
+        parts.append(f'<article{" class=fav" if fav else ""}{data}><div class="head">'
+                     f'<span class="price">{"<span class=star>★</span> " if fav else ""}{e(price)}</span>'
+                     f'<a href="{e(post)}">Открыть в Telegram ({e(row["source"])})</a>'
+                     f'<span class="mute">{e(row["published"][:10])} · #{row["id"]} · {e(author)}</span></div>'
                      f'<div class="tags">{"".join(f"<span>{e(t)}</span>" for t in tags)}</div>'
                      + (f'<ul>{notes}</ul>' if notes else '')
                      + f'<details><summary>Текст объявления</summary><pre>{e(row["text"][:3000])}</pre>'
                      + (''.join(f'<div><a href="{e(x)}">{e(x)}</a></div>' for x in links))
                      + '</details></article>')
+    parts.append('</div>')
     if not rows: parts.append('<p>Подходящих объявлений нет.</p>')
     return ''.join(parts) + '</main>' + (f'<script>{EXPORT_JS}</script>' if rows else '') + '</body></html>'

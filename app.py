@@ -6,7 +6,7 @@ import os
 import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from core import ASK_PROMPTS, SOURCES, export_html, Store, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, scan_days, scan_due
+from core import ASK_PROMPTS, MAX_PAGE_SIZE, SOURCES, export_html, Store, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, scan_days, scan_due
 
 log = logging.getLogger('bar-rent')
 PROGRESS_EVERY = 500
@@ -74,7 +74,7 @@ async def bot_call(http, token, method, **payload):
         if not data.get('ok'): raise BotApiError(data.get('error_code'))
         return data['result']
 
-HELP = ('/filters — мои фильтры\n/find — подходящие объявления\n/more — следующая страница\n/file — все подходящие одним HTML-файлом\n/status — источники\n'
+HELP = ('/filters — мои фильтры\n/find — подходящие объявления\n/more — следующая страница\n/file — все подходящие одним HTML-файлом\n/favorites — избранное\n/status — источники\n'
         '/pause — отключить уведомления\n/resume — включить\nВсе условия и доступность требуют проверки у автора.')
 OWNER_HELP = '\n\nДля владельца:\n/users — статистика пользователей\n/deny ID — заблокировать\n/allow ID — разблокировать\n/reports — посты, отмеченные для проверки парсера'
 NEXT_IN_SETUP = {'p':'bedrooms'}
@@ -88,14 +88,14 @@ async def bot_loop(db, days):
     owner = int(owner)
     db.adopt_owner(owner)
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45)) as http:
-        try: await bot_call(http,token,'setMyCommands',commands=[dict(command=c,description=d) for c,d in (('filters','Мои фильтры'),('find','Подходящие объявления'),('more','Следующая страница'),('file','Все подходящие файлом'),('status','Источники'),('pause','Отключить уведомления'),('resume','Включить уведомления'))])
+        try: await bot_call(http,token,'setMyCommands',commands=[dict(command=c,description=d) for c,d in (('filters','Мои фильтры'),('find','Подходящие объявления'),('more','Следующая страница'),('file','Все подходящие файлом'),('favorites','Избранное'),('status','Источники'),('pause','Отключить уведомления'),('resume','Включить уведомления'))])
         except Exception as e: log.warning('Bot: меню команд не обновлено: %s',type(e).__name__)
         async def send(chat, text, buttons=None):
             payload = dict(chat_id=chat,text=text,link_preview_options={'is_disabled':True})
             if buttons: payload['reply_markup']={'inline_keyboard':buttons}
             await bot_call(http,token,'sendMessage',**payload)
         async def show(chat, row):
-            await send(chat,card(row),card_buttons(row['id'],row['hidden'],db.is_reported(row['id']) if chat==owner else None))
+            await send(chat,card(row),card_buttons(row['id'],row['hidden'],db.is_reported(row['id']) if chat==owner else None,bool(row['favorite'])))
         def render(uid, screen):
             user = db.user(uid)
             return menu(screen,db.filters(uid),len(db.candidates(days,user=uid)),not user['started'])
@@ -139,8 +139,13 @@ async def bot_loop(db, days):
                 await open_screen(uid,'main' if db.user(uid)['started'] else 'cities')
             elif cmd in ('/find','/more'):
                 await find(uid,0 if cmd=='/find' else db.user(uid)['page']+1)
+            elif cmd=='/favorites':
+                rows = db.favorites(uid)
+                if not rows: await send(uid,'В избранном пусто. Нажми «☆ В избранное» на карточке.'); return
+                await send(uid,f'В избранном: {len(rows)}'+(f'. Показаны первые {MAX_PAGE_SIZE}, остальные есть в /file.' if len(rows)>MAX_PAGE_SIZE else ''))
+                for row in rows[:MAX_PAGE_SIZE]: await show(uid,row)
             elif cmd=='/file':
-                rows = db.candidates(days,user=uid)
+                rows = db.export_rows(uid,days)
                 if not rows: await send(uid,'Пока нет кандидатов. Проверь /filters и /status.'); return
                 form = aiohttp.FormData()
                 form.add_field('chat_id',str(uid))
@@ -199,15 +204,15 @@ async def bot_loop(db, days):
                 if known and callback.get('message',{}).get('chat',{}).get('id')==uid:
                     data = callback.get('data','')
                     action, _, pid = data.partition(':')
-                    if action in ('hide','unhide') and pid.isdigit():
-                        db.action(uid,int(pid),action)
-                        await bot_call(http,token,'answerCallbackQuery',callback_query_id=callback['id'],text='Скрыто' if action=='hide' else 'Возвращено')
-                        # Swapping the button at once also gives an undo for a mistaken tap.
-                        await bot_call(http,token,'editMessageReplyMarkup',chat_id=uid,message_id=callback['message']['message_id'],reply_markup={'inline_keyboard':card_buttons(int(pid),action=='hide',db.is_reported(int(pid)) if uid==owner else None)})
-                    elif action in ('report','unreport') and pid.isdigit() and uid==owner:
-                        db.report(int(pid),action=='report')
-                        await bot_call(http,token,'answerCallbackQuery',callback_query_id=callback['id'],text='Отмечено для проверки' if action=='report' else 'Отметка снята')
-                        await bot_call(http,token,'editMessageReplyMarkup',chat_id=uid,message_id=callback['message']['message_id'],reply_markup={'inline_keyboard':card_buttons(int(pid),db.is_hidden(uid,int(pid)),action=='report')})
+                    if action in ('hide','unhide','fav','unfav','report','unreport') and pid.isdigit():
+                        pid = int(pid)
+                        if action in ('hide','unhide'): db.action(uid,pid,action)
+                        elif action in ('fav','unfav'): db.set_favorite(uid,pid,action=='fav')
+                        elif uid==owner: db.report(pid,action=='report')
+                        notice = {'hide':'Скрыто','unhide':'Возвращено','fav':'Добавлено в избранное','unfav':'Убрано из избранного','report':'Отмечено для проверки','unreport':'Отметка снята'}[action]
+                        await bot_call(http,token,'answerCallbackQuery',callback_query_id=callback['id'],text=notice)
+                        # Swapping the buttons at once also gives an undo for a mistaken tap.
+                        await bot_call(http,token,'editMessageReplyMarkup',chat_id=uid,message_id=callback['message']['message_id'],reply_markup={'inline_keyboard':card_buttons(pid,db.is_hidden(uid,pid),db.is_reported(pid) if uid==owner else None,db.is_favorite(uid,pid))})
                     else:
                         await bot_call(http,token,'answerCallbackQuery',callback_query_id=callback['id'])
                         await on_button(uid,callback['message']['message_id'],data)

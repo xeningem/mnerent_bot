@@ -126,6 +126,32 @@ class StorageTests(unittest.TestCase):
         for text in ('Сдаются апартаменты в районе ZALJEVO, БАР. 2 спальни 400 €','Бар, Заљево, 2 спальни, 400 €','Бар, Залjево 2 спальни 400 €'.replace('j','ј'),'Бар, Zaljevo'):
             self.assertEqual(parse(text)['district'],'Заљево',text)
         self.assertNotEqual(parse('Бар, вид на залив, 2 спальни 400 € аренда')['district'],'Заљево')
+    def test_favorites(self):
+        with tempfile.TemporaryDirectory() as d:
+            db=Store(d+'/test.db')
+            now=datetime.now(timezone.utc).isoformat()
+            old=(datetime.now(timezone.utc)-timedelta(days=90)).isoformat()
+            db.put('aarenda',1,now,'Бар. Полье, 2 спальни 700 € аренда на год')
+            db.put('aarenda',2,old,'Бар. Полье, 2 спальни 650 € аренда на год')
+            db.put('aarenda',3,now,'Продаётся квартира в Баре, 90000 €')
+            db.ensure_user(1);db.ensure_user(2)
+            ids={r['message_id']:r['id'] for r in db.db.execute('SELECT id,message_id FROM posts')}
+            self.assertFalse(db.set_favorite(1,999,True))
+            self.assertTrue(db.set_favorite(1,ids[2],True));db.set_favorite(1,ids[3],True)
+            self.assertTrue(db.is_favorite(1,ids[2]));self.assertFalse(db.is_favorite(2,ids[2]))
+            # A star survives hiding, age and a rejecting parser; it is personal.
+            db.action(1,ids[3],'hide')
+            self.assertEqual({r['message_id'] for r in db.favorites(1)},{2,3})
+            self.assertEqual(db.favorites(2),[])
+            rows=db.export_rows(1,14)
+            self.assertEqual({r['message_id'] for r in rows},{1,2,3})
+            self.assertEqual({r['message_id'] for r in db.export_rows(2,14)},{1})
+            self.assertIn('★ В избранном',card([r for r in rows if r['message_id']==2][0]))
+            page=export_html(rows,db.filters(1))
+            self.assertEqual(page.count('data-fav="1"'),2)
+            self.assertIn('id="favonly"',page)
+            db.set_favorite(1,ids[2],False)
+            self.assertFalse(db.is_favorite(1,ids[2]))
     def test_parser_reports(self):
         with tempfile.TemporaryDirectory() as d:
             db=Store(d+'/test.db')
@@ -147,9 +173,10 @@ class StorageTests(unittest.TestCase):
             db.report(pid,False)
             self.assertEqual(db.reports(1),[])
     def test_report_button_only_when_requested(self):
-        self.assertEqual(len(card_buttons(1,False)[0]),1)
-        self.assertEqual([b['callback_data'] for b in card_buttons(1,False,False)[0]],['hide:1','report:1'])
-        self.assertEqual(card_buttons(1,True,True)[0][1]['callback_data'],'unreport:1')
+        self.assertEqual(len(card_buttons(1,False)),1)
+        self.assertEqual([b['callback_data'] for row in card_buttons(1,False,False) for b in row],['fav:1','hide:1','report:1'])
+        self.assertEqual(card_buttons(1,True,True)[1][0]['callback_data'],'unreport:1')
+        self.assertEqual(card_buttons(1,False,None,True)[0][0]['callback_data'],'unfav:1')
     def test_source_and_reparse(self):
         with tempfile.TemporaryDirectory() as d:
             db=Store(d+'/test.db')
@@ -245,7 +272,7 @@ class CardTests(unittest.TestCase):
         row=db.candidates(user=1)[0]
         self.assertEqual(row['hidden'],1)
         self.assertIn('Вы скрыли это объявление',card(row))
-        self.assertEqual(card_buttons(1,row['hidden'])[0][0]['callback_data'],'unhide:1')
+        self.assertEqual(card_buttons(1,row['hidden'])[0][1]['callback_data'],'unhide:1')
         # Hidden posts are never pushed, whatever the mode.
         self.assertEqual(db.pending(1,14,''),[])
         db.action(1,1,'unhide')
@@ -336,7 +363,7 @@ class FilterTests(unittest.TestCase):
         # A post offering a year as well is not rejected by the softer signs.
         self.assertFalse(parse('Сдам 2 спальни в Баре 450 €, на год, либо на 3 месяца дороже')['seasonal'])
     def test_card_shows_term(self):
-        def row(text): return dict(id=1,author_name=None,author_id=None,author_username=None,links='[]',hidden=0,published='2026-11-05',source='x',message_id=1,text=text,parsed=json.dumps(parse(text)))
+        def row(text): return dict(id=1,author_name=None,author_id=None,author_username=None,links='[]',hidden=0,favorite=0,published='2026-11-05',source='x',message_id=1,text=text,parsed=json.dumps(parse(text)))
         self.assertIn('срок: год',card(row('Бар 2 спальни 450 € аренда на год')).split('\n')[0])
         self.assertIn('срок: сезон',card(row('Бар 2 спальни 450 € аренда до июня')).split('\n')[0])
         self.assertIn('срок: ?',card(row('Бар 2 спальни 450 € аренда')).split('\n')[0])
