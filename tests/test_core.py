@@ -152,6 +152,16 @@ class StorageTests(unittest.TestCase):
             self.assertIn('id="favonly"',page)
             db.set_favorite(1,ids[2],False)
             self.assertFalse(db.is_favorite(1,ids[2]))
+    def test_near_duplicate_with_edited_date(self):
+        with tempfile.TemporaryDirectory() as d:
+            db=Store(d+'/test.db')
+            now=datetime.now(timezone.utc).isoformat()
+            me=(7,'Андрей','andrey')
+            base='Аренда, Бар, Шушань, 2 спальни, видовая терраса, новый дом, 4 этаж, паркинг в цене, рядом море и школа, 350 евро. Кухня-гостиная с раскладным диваном, удобная кухня с плитой, большим холодильником, микроволновкой и посудомойкой. Обеденный стол со стульями. Терраса со столиком и стульями. Риелтор Андрей. '
+            db.put('a',1,now,base+'3-7 месяцев по 350 евро.',me);db.put('a',2,now,base+'3-7 месяцев (до 1.06.2026) по 350 евро.',me)
+            db.put('a',3,now,base+'3-7 месяцев по 360 евро.',me)
+            db.ensure_user(1)
+            self.assertEqual(len(db.candidates(14,user=1)),2)
     def test_parser_reports(self):
         with tempfile.TemporaryDirectory() as d:
             db=Store(d+'/test.db')

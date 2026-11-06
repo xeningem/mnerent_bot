@@ -359,13 +359,16 @@ def scan_due(last_ok, every_hours, now=None):
 def parse_post(source, text):
     return json.dumps(parse(text, source in BAR_SOURCES), ensure_ascii=False)
 
+DATE = re.compile(r'(?<![\d.,])\d{1,2}[./]\d{1,2}[./](?:20)?\d{2}(?!\d)')
+
 def same_listing(a, b):
     """One author's copy of a post in two groups, differing by a stray character or two.
     Deliberately narrow: the same author, every number identical (price, floor, area, phone) and near-identical wording.
     Two flats from one template differ in some number, so they stay apart."""
     if a['author_id'] is None or a['author_id'] != b['author_id']: return False
     ta, tb = norm(a['text']), norm(b['text'])
-    if min(len(ta), len(tb)) < 80 or re.findall(r'\d+', ta) != re.findall(r'\d+', tb): return False
+    # A date ("до 1.06.2026") is edited between reposts without making it another flat; other numbers must match.
+    if min(len(ta), len(tb)) < 80 or re.findall(r'\d+', DATE.sub(' ', ta)) != re.findall(r'\d+', DATE.sub(' ', tb)): return False
     matcher = difflib.SequenceMatcher(None, ta, tb, autojunk=False)
     return matcher.quick_ratio() >= 0.95 and matcher.ratio() >= 0.95
 
