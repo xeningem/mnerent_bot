@@ -15,7 +15,7 @@ log = logging.getLogger('bar-rent')
 SOURCES = ['realestate_bar', 'aarenda', 'saleme_realty', 'onerealestatemontenegro', 'abi_mne_realty', 'Montenegro_sell_rent']
 
 # Bump to recalculate stored posts on the next start when parse() output gains a field.
-PARSE_VERSION = '20'
+PARSE_VERSION = '21'
 
 # The group is dedicated to Bar, so its posts often omit the city name.
 BAR_SOURCES = {'realestate_bar'}
@@ -60,7 +60,12 @@ CITIES = [('Бар', r'\bбар(?:е|а|у)?\b|\bбарск|\bbar\b|шушан|�
           ('Бечичи', r'бечич|becic'), ('Рафаиловичи', r'рафаилович|rafailovic'), ('Колашин', r'колашин|kolasin'), ('Жабляк', r'жабляк|zabljak'),
           ('Цетине', r'цетин|cetinj'), ('Никшич', r'никшич|niksic'), ('Рисан', r'рисан|risan'), ('Пераст', r'пераст|perast')]
 # An empty list means any. See filter_reasons() for how missing values are treated.
-DEFAULT_FILTERS = dict(cities=[], price_max=800, bedrooms_min=2, districts={}, term='annual', incomplete=True, include=[], exclude=[], show_hidden=False, page_size=5)
+DEFAULT_FILTERS = dict(cities=[], price_max=800, bedrooms_min=2, districts={}, kinds=[], term='annual', incomplete=True, include=[], exclude=[], show_hidden=False, page_size=5)
+# Property kinds, in the order of the menu buttons. New kinds go to the end: callback_data carries the index.
+KINDS = [('apartment', 'Квартира'), ('studio', 'Студия'), ('room', 'Комната'), ('house', 'Дом')]
+KIND_LABELS = dict(KINDS)
+# A studio or a single room has no separate bedroom, so a user who asked for them is not cut by the bedroom limit.
+SMALL_KINDS = {'studio', 'room'}
 MAX_PAGE_SIZE = 50
 PAGE_SIZE_CHOICES = (5, 10, 20, 50)
 
@@ -121,6 +126,21 @@ def parse_bedrooms(t):
     if re.search(r'студи(?:я|ю|и|й)\b', re.sub(r'(?:кухн\w*|гостин\w*)[\s-]+(?:\w+[\s-]+)?студи\w*', '', t)): return 1
     return None
 
+def parse_kind(t, bedrooms):
+    """'room', 'studio', 'house', 'apartment' or None when the post does not say. Pure text, no user filters."""
+    raw = t
+    # "Комната в квартире" and "квартира в новом доме" name the surroundings, not the thing that is let.
+    t = re.sub(r'\bв\s+(?:[^\W\d]+\s+){0,2}?(?:квартир(?:е|ах)|апартамент(?:е|ах)|дом(?:е|ах)|вилл(?:е|ах))(?!\w)', ' ', t)
+    t = re.sub(r'(?:этаж|часть|половин\w*|мансард\w*|цокольн\w*)\s+(?:[^\W\d]+\s+)?дома(?!\w)', ' ', t)
+    flat = re.search(r'квартир|апарт|apartman|apartment|\bflat|\bstan(?:a|u|ovi)?\b|\d[\s-]*(?:х|ух|ех)?[\s-]*комнатн|(?:одно|дву|трех|четырех)комнатн|(?:jedno|dvo|tro|cetvoro)soban', t)
+    studio = re.search(r'студи(?:я|ю|и|й)\b|garsonjer|\bstudio\b', re.sub(r'(?:кухн\w*|гостин\w*)[\s-]+(?:\w+[\s-]+)?студи\w*', '', t))
+    rent = r'(?:сда\w*|сдам|аренд\w*|сниму?|izdaj\w*|izdavanj\w*|rent)'
+    if not flat and not studio and re.search(rent + r'\W+(?:[^\W\d]+\W+){0,2}?(?:комнат[ауы]?|sob[aeu]|room)(?!\w)', t) or re.search(r'(?:^|[.!?:]\s*)(?:#\w+\s*)*комнат[ауы]\s+(?:в|для)\b', raw): return 'room'
+    if studio and bedrooms in (None, 1): return 'studio'
+    if flat: return 'apartment'
+    if re.search(r'(?<!\w)(?:дом|дома|коттедж\w*|вилл[аыу]|таунхаус\w*|house|villa|kuc[aeu])(?!\w)', t): return 'house'
+    return None
+
 def parse(text, bar_source=False):
     t = norm(text)
     reasons, unknown = [], []
@@ -163,6 +183,7 @@ def parse(text, bar_source=False):
         if rent is not None: price, prices = rent, [rent]
         else: unknown.append('В посте несколько сумм — уточни цену')
     bedrooms = parse_bedrooms(t)
+    kind = parse_kind(t, bedrooms)
     if t.endswith('?') and not prices and bedrooms is None: reasons.append('Вопрос, а не объявление')
     annual = bool(re.search(r'круглогод|на[\s_]+год\b|на\s+12\s+месяц|(?<![\d.,])12\s*(?:мес|month)|(?:на|от)\s+(?:1|одного|один)\s+год|годов\w*[\s_]+аренд|долгосрочн|долгий\s+срок|длительн\w*\s+срок|year.round|annual|godisnj', t))
     seasonal = bool(re.search(r'до\s+(?:\d{1,2}[ .]*)?(?:ма[яй]|июн|июл|апрел|сезон|лет[ао])|на лето.{0,25}(?:выезд|освобод)|летом.{0,25}(?:дорож|повыш|высел)|until\s+(?:may|june|summer)|do\s+(?:maja|juna)', t))
@@ -173,7 +194,7 @@ def parse(text, bar_source=False):
     start = bool(re.search(r'(?:с|заезд|from|od)\s*(?:\d{1,2}\s*)?(?:декабр|январ|decemb|januar)|(?:с|from|od)\s*\d{1,2}[./](?:12[./]2026|0?1[./]2027)', t))
     status = 'reject' if reasons else 'review'
     # City, price and bedroom limits belong to each user, so they are applied by filter_reasons().
-    return dict(cities=cities, district=district, areas=areas, seasonal=seasonal, price=price, min_price=prices[0] if prices else None, bedrooms=bedrooms, annual=annual, stable=stable, start_mentioned=start, status=status, reasons=reasons, unknown=unknown)
+    return dict(cities=cities, district=district, areas=areas, kind=kind, seasonal=seasonal, price=price, min_price=prices[0] if prices else None, bedrooms=bedrooms, annual=annual, stable=stable, start_mentioned=start, status=status, reasons=reasons, unknown=unknown)
 
 def word_found(word, text):
     # A few letters of ending match Russian cases, while "кот" still misses "который".
@@ -193,7 +214,10 @@ def filter_reasons(p, filters, text=''):
         reasons.append('Нет цены или числа спален')
     if filters['price_max'] is not None and p.get('min_price') is not None and p['min_price'] > filters['price_max']:
         reasons.append(f"Цена выше {filters['price_max']} €")
-    if p.get('bedrooms') is not None and p['bedrooms'] < filters['bedrooms_min']:
+    # An unknown kind is kept, like any other missing value.
+    if filters['kinds'] and p.get('kind') and p['kind'] not in filters['kinds']: reasons.append('Другой тип жилья')
+    small = p.get('kind') in SMALL_KINDS and p['kind'] in filters['kinds']
+    if p.get('bedrooms') is not None and p['bedrooms'] < filters['bedrooms_min'] and not small:
         reasons.append(f"Спален меньше {filters['bedrooms_min']}")
     # A district choice narrows only its own city, so another chosen city is not affected.
     relevant = [c for c in p.get('cities') or [] if not filters['cities'] or c in filters['cities']]
@@ -209,7 +233,7 @@ def filter_reasons(p, filters, text=''):
 def describe_filters(f):
     price = f"до {f['price_max']} €" if f['price_max'] is not None else 'любая'
     bedrooms = f"от {f['bedrooms_min']}" if f['bedrooms_min'] else 'любое число'
-    lines = [f"Город: {', '.join(f['cities']) or 'любой'}", f'Цена: {price}', f'Спальни: {bedrooms}', f'Район: {district_label(f)}',
+    lines = [f"Город: {', '.join(f['cities']) or 'любой'}", f'Цена: {price}', f'Спальни: {bedrooms}', f'Район: {district_label(f)}', f'Тип: {kinds_label(f)}',
              f"Срок: {TERM_LABELS[f['term']]}", f"Неполные объявления: {'показывать' if f['incomplete'] else 'скрывать'}",
              f"Скрытые мной: {'показывать' if f['show_hidden'] else 'не показывать'}", f"Объявлений на странице: {f['page_size']}"]
     if f['include']: lines.append('Обязательные слова: ' + ', '.join(f['include']))
@@ -220,6 +244,9 @@ def district_label(f):
     chosen = [(city, name) for city, names in f['districts'].items() for name in names]
     if not chosen: return 'любой'
     return ', '.join(name for _, name in chosen[:3]) + (f' и ещё {len(chosen)-3}' if len(chosen) > 3 else '')
+
+def kinds_label(f):
+    return ', '.join(KIND_LABELS[k].lower() for k, _ in KINDS if k in f['kinds']) or 'любой'
 
 PRICE_CHOICES = (500, 800, 1200, 1500)
 # The term button cycles through these.
@@ -246,7 +273,7 @@ def menu(screen, f, matched=0, setup=False):
             [button('Спальни: ' + bedrooms, 'menu:bedrooms'), button('Район: ' + district_label(f), 'menu:districts')],
             [button('Срок: ' + TERM_LABELS[f['term']], 'set:t'), button('Неполные: ' + ('показывать' if f['incomplete'] else 'скрывать'), 'set:i')],
             [button(f'Слова: {words}' if words else 'Слова: нет', 'menu:words'), button('Скрытые: ' + ('показывать' if f['show_hidden'] else 'нет'), 'set:h')],
-            [button(f"На странице: {f['page_size']}", 'menu:pagesize')],
+            [button('Тип: ' + kinds_label(f), 'menu:kinds'), button(f"На странице: {f['page_size']}", 'menu:pagesize')],
             [button('Показать объявления', 'show')]]
     if screen == 'cities':
         title = 'Шаг 1 из 3. Где ищете? Можно выбрать несколько городов.' if setup else 'Где ищете? Можно выбрать несколько городов.'
@@ -267,6 +294,9 @@ def menu(screen, f, matched=0, setup=False):
             label = (lambda n: f'{city}: {n}') if len(cities) > 1 else (lambda n: n)
             rows += rows_of([button(mark(name in chosen, label(name)), f'set:d:{CITY_NAMES.index(city)}:{i}') for i, (name, _) in enumerate(DISTRICTS[city])], 2)
         return 'Какие районы подходят? Объявления без района всё равно будут показаны.', rows + [[button(mark(not any(f['districts'].values()), 'Любой район'), 'set:d:all')], back]
+    if screen == 'kinds':
+        text = 'Что ищете? Можно выбрать несколько. Для студии и комнаты предел по спальням не действует. Объявления, где тип не указан, всё равно будут показаны.'
+        return text, rows_of([button(mark(k in f['kinds'], label), f'set:k:{i}') for i, (k, label) in enumerate(KINDS)], 2) + [[button(mark(not f['kinds'], 'Любой тип'), 'set:k:all')], back]
     if screen == 'pagesize':
         return 'Сколько объявлений показывать за раз в /find и /more?', rows_of([button(mark(f['page_size'] == n, str(n)), f'set:s:{n}') for n in PAGE_SIZE_CHOICES], 4) + [[button('Своё число', 'ask:page')], back]
     if screen == 'words':
@@ -286,6 +316,10 @@ def apply_choice(f, data):
             if name in f['cities']:
                 return {**f, 'cities': [c for c in f['cities'] if c != name], 'districts': {c: d for c, d in f['districts'].items() if c != name}}
             return {**f, 'cities': [c for c in CITY_NAMES if c in f['cities'] or c == name]}
+        if kind == 'k':
+            if value == ['all']: return {**f, 'kinds': []}
+            name = KINDS[int(value[0])][0]
+            return {**f, 'kinds': [k for k, _ in KINDS if (k in f['kinds']) != (k == name)]}
         if kind == 'p': return {**f, 'price_max': None if value == ['off'] else int(value[0])}
         if kind == 'b': return {**f, 'bedrooms_min': int(value[0])}
         if kind == 's' and 1 <= int(value[0]) <= MAX_PAGE_SIZE: return {**f, 'page_size': int(value[0])}
@@ -691,11 +725,12 @@ def card(row):
     hidden = ('\n★ В избранном' if row['favorite'] else '') + ('\nВы скрыли это объявление' if row['hidden'] else '')
     term = 'сезон' if p.get('seasonal') else 'год' if p.get('annual') else '?'
     history = [x for x in [repeat_text(row)] + [related_text(row, other) for other in field(row, 'related', ())] if x]
-    return (f"#{row['id']} · {place} · {p['district'] or 'район ?'} · {price} · спальни: {bedrooms} · срок: {term}\n"
+    shape = f" · {KIND_LABELS[p['kind']].lower()}" if p.get('kind') in ('studio', 'room', 'house') else ''   # a flat is the default and says nothing
+    return (f"{place} · {p['district'] or 'район ?'}{shape} · {price} · спальни: {bedrooms} · срок: {term}\n"
             f"{row['published'][:10]}, {author}{hidden}{notes}\n" + row['text'][:1700] +
             ('\n\nСсылки из поста:\n' + '\n'.join(links) if links else '') +
-            ('\n\n' + '\n'.join(history) if history else '') +
-            f"\n\nhttps://t.me/{row['source']}/{row['message_id']}")[:4000]
+            f"\n\nhttps://t.me/{row['source']}/{row['message_id']} · #{row['id']}" +
+            ''.join('\n' + x for x in history))[:4000]
 
 
 EXPORT_CSS = """
@@ -727,12 +762,12 @@ const sorts = {
 };
 function apply() {
   const words = $('q').value.toLowerCase().split(/\\s+/).filter(Boolean);
-  const district = $('district').value, term = $('term').value, favOnly = $('favonly').checked;
+  const district = $('district').value, kind = $('kind') ? $('kind').value : '', term = $('term').value, favOnly = $('favonly').checked;
   const order = [...cards].sort((a, b) => sorts[$('sort').value](a, b) || a.dataset.i - b.dataset.i);
   let shown = 0;
   for (const card of order) {
     const text = card.textContent.toLowerCase();
-    const ok = words.every(w => text.includes(w)) && (!district || card.dataset.district === district)
+    const ok = words.every(w => text.includes(w)) && (!district || card.dataset.district === district) && (!kind || card.dataset.kind === kind)
       && (!term || card.dataset.term === term) && (!favOnly || card.dataset.fav === '1');
     card.hidden = !ok;
     shown += ok;
@@ -747,7 +782,7 @@ toggle.onclick = () => {
   toggle.dataset.open = open ? '1' : '';
   toggle.textContent = open ? 'Свернуть все' : 'Развернуть все';
 };
-for (const id of ['q', 'sort', 'district', 'term', 'favonly']) $(id).addEventListener('input', apply);
+for (const id of ['q', 'sort', 'district', 'kind', 'term', 'favonly']) $(id).addEventListener('input', apply);
 $('bar').hidden = false;
 apply();
 """
@@ -762,6 +797,7 @@ def export_html(rows, filters, generated=None):
                'срок: ' + TERM_LABELS.get(filters.get('term'), 'любой')]
     parsed = [json.loads(row['parsed']) for row in rows]
     districts = sorted({p['district'] for p in parsed if p['district']})
+    present = {p.get('kind') for p in parsed}
     stars = sum(1 for row in rows if row['favorite'])
     parts = [f'<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
              f'<title>Аренда в Черногории</title><style>{EXPORT_CSS}</style></head><body><main>'
@@ -775,6 +811,8 @@ def export_html(rows, filters, generated=None):
                      '<option value="dear">Сначала дороже</option><option value="beds">Больше спален</option></select>'
                      '<select id="district" aria-label="Район"><option value="">Любой район</option>'
                      + ''.join(f'<option>{e(d)}</option>' for d in districts) + '</select>'
+                     '<select id="kind" aria-label="Тип"><option value="">Любой тип</option>'
+                     + ''.join(f'<option value="{k}">{e(label)}</option>' for k, label in KINDS if k in present) + '</select>'
                      '<select id="term" aria-label="Срок"><option value="">Любой срок</option><option value="year">Год</option>'
                      '<option value="season">Сезон</option><option value="unknown">Срок не указан</option></select>'
                      '<label><input type="checkbox" id="favonly"> Только ★</label>'
@@ -786,6 +824,7 @@ def export_html(rows, filters, generated=None):
         tags = [', '.join(p.get('cities') or []) or 'город ?', p['district'] or 'район ?',
                 f"спальни: {p['bedrooms'] if p['bedrooms'] is not None else '?'}",
                 {'season': 'сезон', 'year': 'год', 'unknown': 'срок ?'}[term]]
+        if p.get('kind'): tags.insert(2, KIND_LABELS[p['kind']].lower())
         author = row['author_name'] or (f"id {row['author_id']}" if row['author_id'] else 'неизвестен')
         if row['author_username']: author += f" (@{row['author_username']})"
         post = f"https://t.me/{row['source']}/{row['message_id']}"
@@ -795,7 +834,7 @@ def export_html(rows, filters, generated=None):
         price_attr = '' if p['price'] is None else f"{p['price']:g}"
         data = (f' data-i="{index}" data-date="{e(row["published"])}" data-price="{price_attr}"'
                 f' data-beds="{"" if p["bedrooms"] is None else p["bedrooms"]}" data-district="{e(p["district"] or "")}"'
-                f' data-term="{term}" data-fav="{int(fav)}" data-drop="{field(row, "price_drop", 0):g}"')
+                f' data-kind="{p.get("kind") or ""}" data-term="{term}" data-fav="{int(fav)}" data-drop="{field(row, "price_drop", 0):g}"')
         parts.append(f'<article{" class=fav" if fav else ""}{data}><div class="head">'
                      f'<span class="price">{"<span class=star>★</span> " if fav else ""}{e(price)}{" <span class=drop title=&quot;Похожий пост был дороже&quot;>↓</span>" if field(row, "price_drop", 0) else ""}</span>'
                      f'<a href="{e(post)}">Открыть в Telegram ({e(row["source"])})</a>'

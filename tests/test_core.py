@@ -192,7 +192,8 @@ class StorageTests(unittest.TestCase):
             self.assertIn('Похожее #',text)
             self.assertEqual(top['price_drop'],148)
             self.assertTrue(text.index('Похожее #')>text.index(top['text'][:20])>0)       # history goes below the post text
-            self.assertLess(text.index('повторов'),text.index('https://t.me/'))
+            self.assertGreater(text.index('повторов'),text.index('https://t.me/'))   # history follows the source link directly
+            self.assertIn(' · #',text.split('https://t.me/')[1].split('\n')[0])
             self.assertNotIn('Похожее',text.split('\n')[0]+text.split('\n')[1])
             self.assertEqual(rows[1]['price_drop'],0)      # the older, dearer post is not a drop
             self.assertEqual([r['id'] for r in db.export_rows(1,30)][0],top['id'])
@@ -481,11 +482,57 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(filter_reasons(both,BAR),[])
         self.assertIn('Упоминается несколько городов — проверь географию',both['unknown'])
 
+class KindTests(unittest.TestCase):
+    def test_parse_kind(self):
+        cases={'Сдается студия в Баре 400 евро в месяц на год':'studio',
+               'Сдаётся квартира-студия 35 м2, Бар, 380 €':'studio',
+               'Сдается 2-комнатная квартира в Баре, кухня-студия, 2 спальни, 600 евро':'apartment',
+               'Сдаётся комната в квартире, Бар, 200 € в месяц':'room',
+               'Комната в квартире, Бар, 200 € в месяц':'room',
+               'Izdaje se soba u Baru 150 eur':'room',
+               'Сдаётся квартира, игровая комната для ребёнка, 500 евро':'apartment',
+               'Сдается 3-х комнатная квартира в новом доме, 3 спальни, 700€':'apartment',
+               'Сдаётся в комплексе Гармония квартира с одной спальней за 650 е':'apartment',
+               'Izdajem dvosoban stan u Baru 450 eur':'apartment',
+               'Сдаётся дом в Утехе, 3 спальни, 900 €':'house',
+               'Сдаю виллу с бассейном, Тиват, 1500 €':'house',
+               'Сдаётся этаж дома, 3 спальни, Бар, 600 €':None,
+               'Сдается жильё в Баре 400€':None}
+        for text,kind in cases.items(): self.assertEqual(parse(text)['kind'],kind,text)
+    def test_filter_keeps_unknown_kind_and_frees_small_kinds_from_bedrooms(self):
+        studio,flat,unknown=parse('Сдаётся студия в Баре 400 €'),parse('Сдаётся квартира 2 спальни в Баре 500 €'),parse('Сдаётся жильё в Баре 500 €')
+        only_flat={**DEFAULT_FILTERS,'kinds':['apartment']}
+        self.assertEqual(filter_reasons(studio,only_flat),['Другой тип жилья','Спален меньше 2'])
+        self.assertEqual(filter_reasons(flat,only_flat),[])
+        self.assertEqual(filter_reasons(unknown,only_flat),[])
+        self.assertEqual(filter_reasons(studio,{**DEFAULT_FILTERS,'kinds':['studio']}),[])         # asked for studios: one bedroom is enough
+        self.assertEqual(filter_reasons(studio,DEFAULT_FILTERS),['Спален меньше 2'])               # no choice: the bedroom limit stays
+    def test_menu_and_choice(self):
+        f=DEFAULT_FILTERS
+        self.assertIn('Тип: любой',[b['text'] for row in menu('main',f)[1] for b in row])
+        f=apply_choice(f,'set:k:1');f=apply_choice(f,'set:k:3')
+        self.assertEqual(f['kinds'],['studio','house'])
+        self.assertIn('Тип: студия, дом',[b['text'] for row in menu('main',f)[1] for b in row])
+        self.assertIn('✓ Студия',[b['text'] for row in menu('kinds',f)[1] for b in row])
+        self.assertEqual(apply_choice(f,'set:k:1')['kinds'],['house'])
+        self.assertEqual(apply_choice(f,'set:k:all')['kinds'],[])
+        self.assertEqual(apply_choice(f,'set:k:9'),f)
+        for screen in ('main','kinds'):
+            for row in menu(screen,f)[1]:
+                for b in row: self.assertLessEqual(len(b['callback_data'].encode()),64)
+    def test_card_and_export_show_kind(self):
+        def row(text): return dict(id=1,author_name=None,author_id=None,author_username=None,links='[]',hidden=0,favorite=0,published='2026-11-05',source='x',message_id=1,text=text,parsed=json.dumps(parse(text)),price_drop=0)
+        self.assertIn('студия',card(row('Сдаётся студия, Бар, 400 € на год')).split('\n')[0])
+        self.assertNotIn('квартира',card(row('Сдаётся квартира, Бар, 400 € на год')).split('\n')[0])
+        page=export_html([row('Сдаётся студия, Бар, 400 € на год')],DEFAULT_FILTERS)
+        self.assertIn('data-kind="studio"',page)
+        self.assertIn('<option value="studio">Студия</option>',page)
+
 class MenuTests(unittest.TestCase):
     def datas(self,rows): return [b['callback_data'] for row in rows for b in row]
     def test_every_button_fits_telegram_and_is_handled(self):
         f={**DEFAULT_FILTERS,'cities':list(DISTRICTS)}
-        for screen in ('main','cities','price','bedrooms','districts','words','pagesize'):
+        for screen in ('main','cities','price','bedrooms','districts','kinds','words','pagesize'):
             for setup in (False,True):
                 _,rows=menu(screen,f,3,setup)
                 for data in self.datas(rows):
