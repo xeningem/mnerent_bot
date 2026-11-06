@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace as NS
-from core import CITY_NAMES, DEFAULT_FILTERS, DISTRICTS, export_html, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, parse, parse_prices, scan_days, scan_due, Store
+from core import CITY_NAMES, DEFAULT_FILTERS, DISTRICTS, export_html, plain, same_listing, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, parse, parse_prices, scan_days, scan_due, Store
 
 BAR={**DEFAULT_FILTERS,'cities':['Бар']}
 
@@ -162,6 +162,49 @@ class StorageTests(unittest.TestCase):
             db.put('a',3,now,base+'3-7 месяцев по 360 евро.',me)
             db.ensure_user(1)
             self.assertEqual(len(db.candidates(14,user=1)),2)
+    def test_emoji_do_not_break_duplicates(self):
+        base='Сдаётся квартира в Баре, Шушань, 2 спальни, 4 этаж, вид на море, 350 евро в месяц, звонить по любому вопросу, '
+        a=dict(author_id=1,text='✔️#сдам 🏠 '+base+'🛁 🛜 wifi')
+        b=dict(author_id=1,text='😆#сдам 🏡 '+base+'🛁 👨\u200d💻 wifi')
+        self.assertTrue(same_listing(a,b))
+        # Different digits stay different; emoji keycaps do not hide them.
+        self.assertFalse(same_listing(a,dict(author_id=1,text=b['text'].replace('350','360'))))
+        self.assertEqual(plain('A 🏠  b'),'a b')
+    def test_repeats_and_related(self):
+        with tempfile.TemporaryDirectory() as d:
+            db=Store(d+'/test.db')
+            now=datetime.now(timezone.utc)
+            me=(7,'Андрей','andrey')
+            base='Аренда, Бар, Шушань, 2 спальни, видовая терраса, новый дом, 4 этаж, паркинг в цене, рядом море и школа. Кухня-гостиная с раскладным диваном, удобная кухня с плитой, большим холодильником, микроволновкой и посудомойкой. Обеденный стол со стульями. Риелтор Андрей. '
+            day=lambda n:(now-timedelta(days=n)).isoformat()
+            for n,(group,mid,text) in enumerate((('a',1,base+'Цена 498 евро.'),('a',2,base+'Цена 350 евро.'),('b',3,base+'Цена 350 евро.'),('a',4,base+'Цена 350 евро. ✔️'))):
+                db.put(group,mid,day(10-n*3),text,me)
+            db.ensure_user(1)
+            rows=db.candidates(30,user=1)
+            self.assertEqual(len(rows),2)                 # 350 € (three copies, one near) and 498 €
+            rows=db.annotate(rows)
+            top=rows[0]
+            self.assertEqual((top['copies'],top['first'][:10]),(3,day(7)[:10]))
+            self.assertEqual([r['price'] for r in top['related']],[498])
+            text=card(top)
+            self.assertIn('повторов: 2, впервые '+day(7)[:10],text)
+            self.assertIn('498 € → 350 € (-148)',text)
+            self.assertIn('Похожее #',text)
+            page=export_html([top],db.filters(1))
+            self.assertIn('498 € → 350 € (-148)',page)
+            self.assertIn('повторов: 2',page)
+            # A card without annotations renders as before.
+            plain_row={k:v for k,v in top.items() if k not in ('copies','first','related','absorbed')}
+            self.assertNotIn('повторов',card(plain_row))
+    def test_related_found_through_absorbed_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            db=Store(d+'/test.db')
+            base='Аренда, Бар, Шушань, 2 спальни, видовая терраса, новый дом, 4 этаж, паркинг в цене, рядом море и школа. Кухня-гостиная с раскладным диваном, удобная кухня с плитой. Риелтор Андрей. '
+            def row(i,price,**kw): return dict(id=i,author_id=1,source='a',message_id=i,published=f'2026-11-0{i}T10:00:00+00:00',text=base+f'Цена {price} евро.',digest=str(i),parsed=json.dumps(parse(base+f'Цена {price} евро.')),absorbed=[],**kw)
+            now,old,twin=row(3,350),row(1,498),row(2,350)
+            twin['absorbed']=[old]            # the pool entry stands for an older copy that is related to `now`
+            found=db.annotate([now],pool=[now,twin])[0]['related']
+            self.assertEqual([r['id'] for r in found],[1])
     def test_parser_reports(self):
         with tempfile.TemporaryDirectory() as d:
             db=Store(d+'/test.db')

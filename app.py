@@ -116,7 +116,7 @@ async def bot_loop(db, days):
         async def find(uid, page):
             rows = db.candidates(days,user=uid)
             size = db.filters(uid)['page_size']
-            for row in rows[page*size:(page+1)*size]: await show(uid,row)
+            for row in db.annotate(rows[page*size:(page+1)*size],pool=rows): await show(uid,row)
             db.set_user(uid,page=page)
             await send(uid,f'Кандидатов: {len(rows)}. Страница {page+1}. /more — дальше.' if rows else 'Пока нет кандидатов. Проверь /filters и /status.')
         async def typed_value(uid, kind, text):
@@ -143,7 +143,7 @@ async def bot_loop(db, days):
                 rows = db.favorites(uid)
                 if not rows: await send(uid,'В избранном пусто. Нажми «☆ В избранное» на карточке.'); return
                 await send(uid,f'В избранном: {len(rows)}'+(f'. Показаны первые {MAX_PAGE_SIZE}, остальные есть в /file.' if len(rows)>MAX_PAGE_SIZE else ''))
-                for row in rows[:MAX_PAGE_SIZE]: await show(uid,row)
+                for row in db.annotate(rows[:MAX_PAGE_SIZE],pool=rows): await show(uid,row)
             elif cmd=='/file':
                 rows = db.export_rows(uid,days)
                 if not rows: await send(uid,'Пока нет кандидатов. Проверь /filters и /status.'); return

@@ -361,16 +361,35 @@ def parse_post(source, text):
 
 DATE = re.compile(r'(?<![\d.,])\d{1,2}[./]\d{1,2}[./](?:20)?\d{2}(?!\d)')
 
+# Emoji are decoration: swapping one is not an edit. Used only to compare texts; `digest` still comes from norm(),
+# because changing it would make every stored post look edited and be sent again.
+EMOJI = re.compile('[\U0001F000-\U0001FAFF\U000E0020-\U000E007F\u2190-\u21FF\u2300-\u23FF\u25A0-\u25FF\u2600-\u27BF\u2900-\u297F\u2B00-\u2BFF\u3030\u303D\u3297\u3299\uFE00-\uFE0F\u200D\u20E3\u00A9\u00AE\u203C\u2049\u2122\u2139]')
+
+def plain(text):
+    return re.sub(r'\s+', ' ', EMOJI.sub(' ', norm(text))).strip()
+
+def numbers(text):
+    # A date ("до 1.06.2026") is edited between reposts without making it another flat; other numbers must match.
+    return re.findall(r'\d+', DATE.sub(' ', text))
+
+def text_ratio(ta, tb, floor=0.95):
+    """Share of identical characters (difflib ratio), or 0 when cheap upper bounds already put it below the floor."""
+    matcher = difflib.SequenceMatcher(None, ta, tb, autojunk=False)
+    return matcher.ratio() if matcher.real_quick_ratio() >= floor and matcher.quick_ratio() >= floor else 0.0
+
 def same_listing(a, b):
     """One author's copy of a post in two groups, differing by a stray character or two.
     Deliberately narrow: the same author, every number identical (price, floor, area, phone) and near-identical wording.
     Two flats from one template differ in some number, so they stay apart."""
     if a['author_id'] is None or a['author_id'] != b['author_id']: return False
-    ta, tb = norm(a['text']), norm(b['text'])
-    # A date ("до 1.06.2026") is edited between reposts without making it another flat; other numbers must match.
-    if min(len(ta), len(tb)) < 80 or re.findall(r'\d+', DATE.sub(' ', ta)) != re.findall(r'\d+', DATE.sub(' ', tb)): return False
-    matcher = difflib.SequenceMatcher(None, ta, tb, autojunk=False)
-    return matcher.quick_ratio() >= 0.95 and matcher.ratio() >= 0.95
+    ta, tb = plain(a['text']), plain(b['text'])
+    return min(len(ta), len(tb)) >= 80 and numbers(ta) == numbers(tb) and text_ratio(ta, tb) >= 0.95
+
+def related_listing(a, b):
+    """Same author and near-identical wording, but some number differs: another unit of the template, or a repriced repost."""
+    if a['author_id'] is None or a['author_id'] != b['author_id']: return False
+    ta, tb = plain(a['text']), plain(b['text'])
+    return min(len(ta), len(tb)) >= 80 and numbers(ta) != numbers(tb) and text_ratio(ta, tb) >= 0.95
 
 def bucket(user_filters):
     return json.loads(user_filters).get('cities') or ['любой']
@@ -399,6 +418,7 @@ class Store:
           user_id INTEGER, post_id INTEGER, hidden INTEGER DEFAULT 0, notified TEXT, favorite INTEGER DEFAULT 0,
           PRIMARY KEY(user_id,post_id));
         CREATE INDEX IF NOT EXISTS user_posts_post ON user_posts(post_id);
+        CREATE INDEX IF NOT EXISTS posts_digest ON posts(digest);
         CREATE TABLE IF NOT EXISTS parser_reports(post_id INTEGER PRIMARY KEY, created TEXT, parsed TEXT, comment TEXT DEFAULT '');
         ''')
         if 'changed' not in self.post_columns(): self.upgrade_posts()
@@ -537,13 +557,35 @@ class Store:
     def candidates(self, days=14, include_rejected=False, user=None):
         cutoff = (datetime.now(timezone.utc)-timedelta(days=days)).isoformat()
         filters = self.filters(user)
-        result, digests = [], set()
+        result, kept = [], {}
         for row in self.visible(user,'',(user,cutoff),filters['show_hidden']):
             p = json.loads(row['parsed'])
             if not include_rejected and (p['status']=='reject' or filter_reasons(p,filters,row['text'])): continue
-            if row['digest'] in digests: continue
-            digests.add(row['digest'])
-            if any(same_listing(row, other) for other in result if other['author_id'] is not None and other['author_id'] == row['author_id']): continue
+            if row['digest'] in kept: continue
+            row = dict(row)
+            row['absorbed'] = []  # older near copies folded into this post; annotate() counts them as repeats and matches through them
+            twin = next((other for other in result if other['author_id'] is not None and other['author_id'] == row['author_id'] and same_listing(row, other)), None)
+            if twin: twin['absorbed'].append(row); kept[row['digest']] = twin; continue
+            kept[row['digest']] = row
+            result.append(row)
+        return result
+    def annotate(self, rows, pool=None):
+        """What a card shows beyond the post itself: how often it was reposted and similar posts of the same author
+        (another unit of a template or a repriced repost). `pool` is where to look for those; by default `rows`."""
+        pool = [o if isinstance(o, dict) else dict(o) for o in (rows if pool is None else pool)]
+        result = []
+        for row in rows:
+            row = dict(row)
+            members = [row, *row.get('absorbed', ())]
+            digests = sorted({m['digest'] for m in members})
+            copies, first = self.db.execute('SELECT COUNT(*),MIN(published) FROM posts WHERE digest IN (%s) AND author_id IS ?' % ','.join('?'*len(digests)), (*digests, row['author_id'])).fetchone()
+            row['copies'], row['first'] = copies, first
+            related = []
+            for o in pool:
+                if o['id'] == row['id']: continue
+                match = next((x for x in (o, *o.get('absorbed', ())) for m in members if related_listing(m, x)), None)
+                if match: related.append(dict(id=match['id'],published=match['published'],source=match['source'],message_id=match['message_id'],price=json.loads(match['parsed'])['price']))
+            row['related'] = sorted(related, key=lambda r: r['published'], reverse=True)[:3]
             result.append(row)
         return result
     def favorites(self, user):
@@ -554,7 +596,7 @@ class Store:
         rows = self.candidates(days,user=user)
         have = {row['id'] for row in rows}
         rows = rows + [row for row in self.favorites(user) if row['id'] not in have]
-        return sorted(rows,key=lambda row: row['published'],reverse=True)
+        return self.annotate(sorted(rows,key=lambda row: row['published'],reverse=True))
     def set_favorite(self, user, pid, flag):
         if not self.db.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): return False
         self.db.execute('INSERT INTO user_posts(user_id,post_id,favorite) VALUES(?,?,?) ON CONFLICT(user_id,post_id) DO UPDATE SET favorite=excluded.favorite',(user,pid,int(bool(flag))))
@@ -610,6 +652,26 @@ def card_buttons(pid, hidden, favorite=False):
     return [[button('★ В избранном' if favorite else '☆ В избранное', f'unfav:{pid}' if favorite else f'fav:{pid}'),
              button('Вернуть', f'unhide:{pid}') if hidden else button('Скрыть', f'hide:{pid}')]]
 
+def field(row, name, default=None):
+    try: return row[name]
+    except (KeyError, IndexError): return default
+
+def repeat_text(row):
+    """'повторов: 10, впервые 2026-10-24' for a post that keeps being republished, else ''."""
+    copies, first = field(row, 'copies', 1), field(row, 'first')
+    if copies < 2: return ''
+    return f'повторов: {copies-1}' + (f", впервые {first[:10]}" if first and first[:10] != row['published'][:10] else '')
+
+def related_text(row, other):
+    """One line, oldest price first: 'Похожее #16701 (2026-10-26): 498 € → 350 € (-148)'."""
+    price = json.loads(row['parsed'])['price']
+    newer = other['published'] > row['published']
+    head = f"Похожее #{other['id']} ({other['published'][:10]}{', новее' if newer else ''})"
+    old, new = (price, other['price']) if newer else (other['price'], price)
+    if old is None or new is None or old == new:
+        return head + (f": {other['price']:g} €" if other['price'] is not None else '')
+    return f"{head}: {old:g} € → {new:g} € ({new-old:+g})"
+
 def card(row):
     p = json.loads(row['parsed'])
     price = f"{p['price']:g} €" if p['price'] is not None else 'цена ?'
@@ -622,7 +684,8 @@ def card(row):
     hidden = ('\n★ В избранном' if row['favorite'] else '') + ('\nВы скрыли это объявление' if row['hidden'] else '')
     term = 'сезон' if p.get('seasonal') else 'год' if p.get('annual') else '?'
     return (f"#{row['id']} · {place} · {p['district'] or 'район ?'} · {price} · спальни: {bedrooms} · срок: {term}\n"
-            f"{row['published'][:10]}, {author}{hidden}{notes}\n" + row['text'][:1700] +
+            f"{row['published'][:10]}, {author}" + (' · ' + repeat_text(row) if repeat_text(row) else '') + f"{hidden}{notes}"
+            + ''.join('\n' + related_text(row, other) for other in field(row, 'related', ())) + '\n' + row['text'][:1700] +
             ('\n\nСсылки из поста:\n' + '\n'.join(links) if links else '') +
             f"\n\nhttps://t.me/{row['source']}/{row['message_id']}")[:4000]
 
@@ -727,9 +790,10 @@ def export_html(rows, filters, generated=None):
         parts.append(f'<article{" class=fav" if fav else ""}{data}><div class="head">'
                      f'<span class="price">{"<span class=star>★</span> " if fav else ""}{e(price)}</span>'
                      f'<a href="{e(post)}">Открыть в Telegram ({e(row["source"])})</a>'
-                     f'<span class="mute">{e(row["published"][:10])} · #{row["id"]} · {e(author)}</span></div>'
+                     f'<span class="mute">{e(row["published"][:10])} · #{row["id"]} · {e(author)}{" · " + e(repeat_text(row)) if repeat_text(row) else ""}</span></div>'
                      f'<div class="tags">{"".join(f"<span>{e(t)}</span>" for t in tags)}</div>'
                      + (f'<ul>{notes}</ul>' if notes else '')
+                     + ''.join(f'<div class="mute">{e(related_text(row, o))} · <a href="https://t.me/{e(o["source"])}/{o["message_id"]}">открыть</a></div>' for o in field(row, 'related', ()))
                      + f'<details><summary>Текст объявления</summary><pre>{e(row["text"][:3000])}</pre>'
                      + (''.join(f'<div><a href="{e(x)}">{e(x)}</a></div>' for x in links))
                      + '</details></article>')
