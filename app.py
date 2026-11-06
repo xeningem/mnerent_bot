@@ -95,7 +95,7 @@ async def bot_loop(db, days):
             if buttons: payload['reply_markup']={'inline_keyboard':buttons}
             await bot_call(http,token,'sendMessage',**payload)
         async def show(chat, row):
-            await send(chat,card(row),card_buttons(row['id'],row['hidden'],db.is_reported(row['id']) if chat==owner else None,bool(row['favorite'])))
+            await send(chat,card(row),card_buttons(row['id'],row['hidden'],bool(row['favorite'])))
         def render(uid, screen):
             user = db.user(uid)
             return menu(screen,db.filters(uid),len(db.candidates(days,user=uid)),not user['started'])
@@ -204,15 +204,14 @@ async def bot_loop(db, days):
                 if known and callback.get('message',{}).get('chat',{}).get('id')==uid:
                     data = callback.get('data','')
                     action, _, pid = data.partition(':')
-                    if action in ('hide','unhide','fav','unfav','report','unreport') and pid.isdigit():
+                    if action in ('hide','unhide','fav','unfav') and pid.isdigit():
                         pid = int(pid)
                         if action in ('hide','unhide'): db.action(uid,pid,action)
                         elif action in ('fav','unfav'): db.set_favorite(uid,pid,action=='fav')
-                        elif uid==owner: db.report(pid,action=='report')
-                        notice = {'hide':'Скрыто','unhide':'Возвращено','fav':'Добавлено в избранное','unfav':'Убрано из избранного','report':'Отмечено для проверки','unreport':'Отметка снята'}[action]
+                        notice = {'hide':'Скрыто','unhide':'Возвращено','fav':'Добавлено в избранное','unfav':'Убрано из избранного'}[action]
                         await bot_call(http,token,'answerCallbackQuery',callback_query_id=callback['id'],text=notice)
                         # Swapping the buttons at once also gives an undo for a mistaken tap.
-                        await bot_call(http,token,'editMessageReplyMarkup',chat_id=uid,message_id=callback['message']['message_id'],reply_markup={'inline_keyboard':card_buttons(pid,db.is_hidden(uid,pid),db.is_reported(pid) if uid==owner else None,db.is_favorite(uid,pid))})
+                        await bot_call(http,token,'editMessageReplyMarkup',chat_id=uid,message_id=callback['message']['message_id'],reply_markup={'inline_keyboard':card_buttons(pid,db.is_hidden(uid,pid),db.is_favorite(uid,pid))})
                     else:
                         await bot_call(http,token,'answerCallbackQuery',callback_query_id=callback['id'])
                         await on_button(uid,callback['message']['message_id'],data)

@@ -160,23 +160,21 @@ class StorageTests(unittest.TestCase):
             pid=db.db.execute('SELECT id FROM posts').fetchone()['id']
             self.assertFalse(db.report(999,True))
             self.assertTrue(db.report(pid,True));db.report(pid,True)
-            self.assertTrue(db.is_reported(pid))
+            self.assertEqual([r['id'] for r in db.reports(1)],[pid])
             rows=db.reports(1)
             self.assertEqual(len(rows),1)
             self.assertEqual(json.loads(rows[0]['parsed_then'])['district'],'Полье')
             # Hiding for the owner and reporting are independent.
             db.ensure_user(1);db.action(1,pid,'hide')
-            self.assertTrue(db.is_hidden(1,pid) and db.is_reported(pid))
+            self.assertTrue(db.is_hidden(1,pid) and db.reports(1))
             self.assertTrue(db.comment(pid,'район не тот'));db.comment(pid,'и цена')
             self.assertEqual(db.reports(1)[0]['comment'],'район не тот\nи цена')
             self.assertFalse(db.comment(999,'x'))
             db.report(pid,False)
             self.assertEqual(db.reports(1),[])
-    def test_report_button_only_when_requested(self):
-        self.assertEqual(len(card_buttons(1,False)),1)
-        self.assertEqual([b['callback_data'] for row in card_buttons(1,False,False) for b in row],['fav:1','hide:1','report:1'])
-        self.assertEqual(card_buttons(1,True,True)[1][0]['callback_data'],'unreport:1')
-        self.assertEqual(card_buttons(1,False,None,True)[0][0]['callback_data'],'unfav:1')
+    def test_card_buttons(self):
+        self.assertEqual([b['callback_data'] for b in card_buttons(1,False)[0]],['fav:1','hide:1'])
+        self.assertEqual([b['callback_data'] for b in card_buttons(1,True,True)[0]],['unfav:1','unhide:1'])
     def test_source_and_reparse(self):
         with tempfile.TemporaryDirectory() as d:
             db=Store(d+'/test.db')

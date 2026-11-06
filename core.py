@@ -580,8 +580,6 @@ class Store:
     def is_hidden(self, user, pid):
         row = self.db.execute('SELECT hidden FROM user_posts WHERE user_id=? AND post_id=?',(user,pid)).fetchone()
         return bool(row and row['hidden'])
-    def is_reported(self, pid):
-        return self.db.execute('SELECT 1 FROM parser_reports WHERE post_id=?',(pid,)).fetchone() is not None
     def comment(self, pid, text):
         """Owner's note on a post; it also puts the post on the parser review list."""
         if not self.report(pid, True): return False
@@ -605,12 +603,9 @@ class Store:
         self.db.commit()
         return True
 
-def card_buttons(pid, hidden, reported=None, favorite=False):
-    """reported is None for users who cannot flag posts; the owner gets a second row with that button."""
-    rows = [[button('★ В избранном' if favorite else '☆ В избранное', f'unfav:{pid}' if favorite else f'fav:{pid}'),
+def card_buttons(pid, hidden, favorite=False):
+    return [[button('★ В избранном' if favorite else '☆ В избранное', f'unfav:{pid}' if favorite else f'fav:{pid}'),
              button('Вернуть', f'unhide:{pid}') if hidden else button('Скрыть', f'hide:{pid}')]]
-    if reported is not None: rows.append([button('✓ На проверке' if reported else 'На проверку парсера', f'unreport:{pid}' if reported else f'report:{pid}')])
-    return rows
 
 def card(row):
     p = json.loads(row['parsed'])
