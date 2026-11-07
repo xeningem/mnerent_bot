@@ -176,7 +176,8 @@ async def bot_loop(db, days):
                 s = db.user_stats()
                 cities = ', '.join(f'{city}: {count}' for city,count in s['cities'])
                 await send(uid,f"Пользователей: {s['total']}\nЗавершили настройку: {s['started']}\nС уведомлениями: {s['notified']}\nНовых за 7 дней: {s['new_week']}\nЗаблокировано: {s['blocked']}\n\nВыбранные города: {cities}")
-            else:
+            elif uid!=owner or cmd.startswith('/'):
+                # The owner's plain text is a message for review, not a mistyped command.
                 await send(uid,HELP)
         async def on_button(uid, message_id, data):
             if data.startswith('menu:'):
@@ -222,6 +223,20 @@ async def bot_loop(db, days):
                 # The owner's reply to a card is a note for parser review; the card id is in the link line "https://t.me/<source>/<n> · #<id>".
                 quoted = (message.get('reply_to_message') or {}).get('text','')
                 match = re.search(r'^https://t\.me/\S+ · #(\d+)$',quoted,re.M)
+                # Only the owner's own messages are logged, so they can be reviewed; nobody else's text reaches the log.
+                if uid==owner and not match and (message.get('text') or message.get('caption')):
+                    log.info('Сообщение владельца%s: %s',' (реплай)' if quoted else '',' ⏎ '.join((message.get('text') or message['caption']).splitlines()))
+                if uid==owner and message.get('photo'):
+                    # The largest size is last; the file is saved so the owner's picture can be opened later.
+                    try:
+                        info = await bot_call(http,token,'getFile',file_id=message['photo'][-1]['file_id'])
+                        folder = Path('data/photos'); folder.mkdir(parents=True,exist_ok=True)
+                        target = folder/f"{message['message_id']}{Path(info['file_path']).suffix or '.jpg'}"
+                        async with http.get(f"https://api.telegram.org/file/bot{token}/{info['file_path']}") as r:
+                            if r.status==200: target.write_bytes(await r.read()); log.info('Фото владельца: %s',target)
+                            else: log.warning('Фото владельца не скачано: %s',r.status)
+                    except BotApiError as e: log.warning('Фото владельца не скачано: %s',e.code)
+                    return
                 if uid==owner and match and message.get('text'):
                     pid = int(match.group(1))
                     if db.comment(pid,message['text']):
