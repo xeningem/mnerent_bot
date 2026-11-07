@@ -124,6 +124,14 @@ class StorageTests(unittest.TestCase):
             self.assertIn('id="toggle"',page)
             self.assertNotIn('id="toggle"',export_html([],db.filters(1)))
             self.assertIn('Подходящих объявлений нет',export_html([],db.filters(1)))
+    def test_zetagradnja_complex(self):
+        for text in ('Сдаётся 2 спальни в Zetagradnja, Бар, 800 €', 'Зетаградня 800 евро, 2 спальни', 'Сдаю в Зетаграднья 2 спальни 800 €',
+                     'квартира в комплексе Zeta Gradnja, центр Бара, 800 €', 'в здании «Зетаградне», аренда, 2 спальни'):
+            result = parse(text)
+            self.assertEqual(result['district'], 'Зетаградня', text)
+            self.assertEqual(result['cities'], ['Бар'], text)
+        self.assertNotEqual(parse('Бар, аренда, размер Zeta 2 спальни 400 €')['district'], 'Зетаградня')
+
     def test_zaljevo_district(self):
         for text in ('Сдаются апартаменты в районе ZALJEVO, БАР. 2 спальни 400 €','Бар, Заљево, 2 спальни, 400 €','Бар, Залjево 2 спальни 400 €'.replace('j','ј'),'Бар, Zaljevo'):
             self.assertEqual(parse(text)['district'],'Заљево',text)

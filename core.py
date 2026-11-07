@@ -15,7 +15,7 @@ log = logging.getLogger('bar-rent')
 SOURCES = ['realestate_bar', 'aarenda', 'saleme_realty', 'onerealestatemontenegro', 'abi_mne_realty', 'Montenegro_sell_rent']
 
 # Bump to recalculate stored posts on the next start when parse() output gains a field.
-PARSE_VERSION = '21'
+PARSE_VERSION = '22'
 
 # The group is dedicated to Bar, so its posts often omit the city name.
 BAR_SOURCES = {'realestate_bar'}
@@ -44,7 +44,8 @@ DISTANCE_TO_CENTER = re.compile(r'\b(?:до|от|к|ко|do|od|blizu|близк�
 # Chosen by how often each name occurs in the collected posts. A specific name also identifies its city.
 DISTRICTS = {
     'Бар': [('Центр', CENTER), ('Шушань', r'шушан|сушан|susanj'), ('Ильино', r'\bильин|\bилин|\bilino'), ('Белиши', r'б[ьј]?[еи]л[еи]ш|bj?elis'),
-            ('Тополица', r'тополиц|topolic'), ('Полье', r'\bполье\b|\bpolje\b|(?:район|р-н|микрорайон|рајон)\w*\s+поле\b'), ('Зелёный пояс', r'зелен\w+\s+пояс|zeleni\s+pojas'), ('Старый Бар', r'стар\w+\s+бар|stari\s+bar'), ('Чань', r'\bчан[ьеи]\b|\bcanj\b'), ('Заљево', r'за(?:л[ьјя]|љ)ев|zalj?ev')],
+            ('Тополица', r'тополиц|topolic'), ('Полье', r'\bполье\b|\bpolje\b|(?:район|р-н|микрорайон|рајон)\w*\s+поле\b'), ('Зелёный пояс', r'зелен\w+\s+пояс|zeleni\s+pojas'), ('Старый Бар', r'стар\w+\s+бар|stari\s+bar'), ('Чань', r'\bчан[ьеи]\b|\bcanj\b'), ('Заљево', r'за(?:л[ьјя]|љ)ев|zalj?ev'),
+            ('Зетаградня', r'зета\s?град|zeta\s?grad')],
     'Будва': [('Центр', CENTER), ('Старый город', OLD_TOWN), ('Розино', r'розино|rozino'), ('Дубовица', r'дубовиц|dubovic'), ('Лази', r'\bлази\b|\blazi\b'),
               ('Бабин До', r'бабин\s+до|babin\s+do'), ('Голубовина', r'голубовин|golubovin'), ('Подкошлюн', r'подкошл|podkosljun'), ('Пржно', r'пржно|przno|милочер|milocer'), ('Свети Стефан', r'свети\s+стефан|sveti\s+stefan'), ('Каменово', r'каменов|kamenovo')],
     'Тиват': [('Центр', CENTER), ('Селяново', r'селянов|seljanov'), ('Порто Монтенегро', r'порто\s+монтенегро|porto\s+montenegro'), ('Донья Ластва', r'дон[ья]+\s+ластв|donja\s+lastv'), ('Мрчевац', r'мрчевац|mrcevac'), ('Крашичи', r'крашич|krasic')],
