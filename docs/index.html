@@ -1,0 +1,97 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Просмотр объявлений</title>
+<style>
+:root{color-scheme:light dark;--bg:#fafafa;--fg:#1d1d1f;--mute:#6b6b70;--line:#dcdce0;--card:#fff;--accent:#0a66c2;--star:#e0a000}
+@media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececf0;--mute:#9a9aa2;--line:#33333a;--card:#1f1f23;--accent:#6cb2ff;--star:#f2c038}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:8px 0}.mute{color:var(--mute);font-size:13px}
+article{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
+article.fav{border-color:var(--star)}.star{color:var(--star)}.drop{color:#1a8f3c}
+.head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}.head .mute{font-size:12px}.price{font-weight:700;font-size:17px}
+.tags span{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:0 8px;margin:2px 4px 2px 0;font-size:13px}
+details{margin-top:6px}summary{cursor:pointer;color:var(--accent)}pre{white-space:pre-wrap;word-break:break-word;font:inherit;margin:8px 0 0}
+a{color:var(--accent)}ul{margin:6px 0;padding-left:18px}
+.bar{position:sticky;top:0;z-index:1;background:var(--bg);padding:8px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-bottom:1px solid var(--line)}
+.bar[hidden]{display:none}
+button,select,input[type=search]{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:4px 10px}
+button{cursor:pointer}input[type=search]{flex:1 1 180px;min-width:0}label{white-space:nowrap}
+
+.pick{border:2px dashed var(--line);border-radius:12px;padding:28px 16px;text-align:center;margin:24px 0}
+.pick.over{border-color:var(--accent)}.pick input{display:none}
+.pick label.btn{display:inline-block;background:var(--accent);color:var(--bg);border-radius:8px;padding:8px 16px;cursor:pointer}
+.again{margin:8px 0}
+</style></head><body><main>
+<div id="start"><h1>Просмотр объявлений</h1>
+<p class="mute">Откройте файл, который прислал бот командой /file. Он читается прямо в браузере и никуда не отправляется: поиск, сортировка и фильтры работают здесь.</p>
+<div class="pick" id="drop"><label class="btn">Выбрать файл<input type="file" id="file" accept=".html,.htm,text/html"></label>
+<p class="mute">или перетащите его сюда</p></div>
+<p class="mute" id="err" hidden></p></div>
+<div id="view" hidden><button class="again" id="again">Открыть другой файл</button><div id="doc"></div></div>
+</main><script>
+function show() {
+
+const list = document.getElementById('list'), cards = [...list.children], $ = id => document.getElementById(id);
+const sorts = {
+  drop: (a, b) => b.dataset.drop - a.dataset.drop || b.dataset.date.localeCompare(a.dataset.date),
+  new: (a, b) => b.dataset.date.localeCompare(a.dataset.date),
+  cheap: (a, b) => (a.dataset.price === '') - (b.dataset.price === '') || a.dataset.price - b.dataset.price,
+  dear: (a, b) => (a.dataset.price === '') - (b.dataset.price === '') || b.dataset.price - a.dataset.price,
+  beds: (a, b) => (a.dataset.beds === '') - (b.dataset.beds === '') || b.dataset.beds - a.dataset.beds,
+};
+function apply() {
+  const words = $('q').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const district = $('district').value, kind = $('kind') ? $('kind').value : '', term = $('term').value, favOnly = $('favonly').checked;
+  const order = [...cards].sort((a, b) => sorts[$('sort').value](a, b) || a.dataset.i - b.dataset.i);
+  let shown = 0;
+  for (const card of order) {
+    const text = card.textContent.toLowerCase();
+    const ok = words.every(w => text.includes(w)) && (!district || card.dataset.district === district) && (!kind || card.dataset.kind === kind)
+      && (!term || card.dataset.term === term) && (!favOnly || card.dataset.fav === '1');
+    card.hidden = !ok;
+    shown += ok;
+    list.append(card);
+  }
+  $('count').textContent = 'Показано ' + shown + ' из ' + cards.length;
+}
+const toggle = $('toggle');
+toggle.onclick = () => {
+  const open = toggle.dataset.open !== '1';
+  document.querySelectorAll('details').forEach(d => d.open = open);
+  toggle.dataset.open = open ? '1' : '';
+  toggle.textContent = open ? 'Свернуть все' : 'Развернуть все';
+};
+for (const id of ['q', 'sort', 'district', 'kind', 'term', 'favonly']) $(id).addEventListener('input', apply);
+$('bar').hidden = false;
+apply();
+
+}
+const $$ = id => document.getElementById(id);
+function load(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onerror = () => fail('Не удалось прочитать файл.');
+  reader.onload = () => {
+    const src = new DOMParser().parseFromString(String(reader.result), 'text/html');   // разбор не выполняет скрипты
+    const list = src.getElementById('list');
+    if (!list || !list.querySelector('article')) return fail('В файле нет объявлений. Нужен файл, который прислал бот командой /file.');
+    src.querySelectorAll('script,iframe,object,embed,link,meta').forEach(n => n.remove());
+    src.querySelectorAll('*').forEach(n => [...n.attributes].forEach(a => { if (/^on/i.test(a.name)) n.removeAttribute(a.name); }));
+    const doc = $$('doc');
+    doc.replaceChildren();
+    for (const node of src.querySelector('main').children) doc.append(document.importNode(node, true));
+    $$('start').hidden = true; $$('view').hidden = false;
+    show();
+    window.scrollTo(0, 0);
+  };
+  reader.readAsText(file);
+}
+function fail(text) { $$('err').textContent = text; $$('err').hidden = false; }
+$$('file').addEventListener('change', e => load(e.target.files[0]));
+$$('again').onclick = () => { $$('view').hidden = true; $$('start').hidden = false; $$('file').value = ''; $$('err').hidden = true; };
+const drop = $$('drop');
+for (const t of ['dragenter', 'dragover']) drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); });
+for (const t of ['dragleave', 'drop']) drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); });
+drop.addEventListener('drop', e => load(e.dataTransfer.files[0]));
+</script></body></html>
