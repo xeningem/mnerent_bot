@@ -150,7 +150,7 @@ async def bot_loop(db, days):
                 if not rows: await send(uid,'Пока нет кандидатов. Проверь /filters и /status.'); return
                 form = aiohttp.FormData()
                 form.add_field('chat_id',str(uid))
-                form.add_field('caption',f'Подходящих объявлений: {len(rows)}')
+                form.add_field('caption',f'Подходящих объявлений: {len(rows)}. Фильтры и сортировка работают только в браузере, не во встроенном просмотре Telegram.')
                 form.add_field('document',export_html(rows,db.filters(uid)).encode(),filename=f'rent-{datetime.now(timezone.utc):%Y%m%d}.html',content_type='text/html')
                 async with http.post(f'https://api.telegram.org/bot{token}/sendDocument',data=form) as r:
                     if r.status!=200: log.warning('Bot: sendDocument не удался: %s',r.status)

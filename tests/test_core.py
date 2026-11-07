@@ -118,6 +118,8 @@ class StorageTests(unittest.TestCase):
             self.assertIn('Открыть в Telegram (aarenda)',page)
             self.assertIn(' · #1 · ',page)
             self.assertNotIn('<script>alert',page)
+            self.assertIn('<noscript>',page)
+            self.assertNotIn('<noscript>',export_html([],db.filters(1)))
             self.assertIn('&lt;script&gt;',page)
             self.assertIn('id="toggle"',page)
             self.assertNotIn('id="toggle"',export_html([],db.filters(1)))
