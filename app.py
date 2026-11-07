@@ -219,9 +219,9 @@ async def bot_loop(db, days):
             elif message.get('chat',{}).get('type')=='private':
                 # Anyone may use the bot: the first message registers them.
                 if not known: db.add_user(uid)
-                # The owner's reply to a card is a note for parser review; the card starts with "#<id> ·".
+                # The owner's reply to a card is a note for parser review; the card id is in the link line "https://t.me/<source>/<n> · #<id>".
                 quoted = (message.get('reply_to_message') or {}).get('text','')
-                match = re.match(r'#(\d+) ·',quoted)
+                match = re.search(r'^https://t\.me/\S+ · #(\d+)$',quoted,re.M)
                 if uid==owner and match and message.get('text'):
                     pid = int(match.group(1))
                     if db.comment(pid,message['text']):
