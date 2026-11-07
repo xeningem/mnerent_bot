@@ -132,6 +132,13 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(result['cities'], ['Бар'], text)
         self.assertNotEqual(parse('Бар, аренда, размер Zeta 2 спальни 400 €')['district'], 'Зетаградня')
 
+    def test_zupci_district(self):
+        for text in ('В районе Зупци, недалеко от Esmeralda, сдаётся квартира, 2 спальни, 500 €', 'Таунхаус в долгосрочную аренду, Зупцы, Бар', 'Бар, Zupci, аренда 2 спальни'):
+            result = parse(text)
+            self.assertEqual(result['district'], 'Зупци', text)
+            self.assertEqual(result['cities'], ['Бар'], text)
+        self.assertEqual(parse('Белиши, дорога в сторону Зупци, Бар, аренда, 2 спальни, 1000 €')['areas']['Бар'], ['Белиши', 'Зупци'])
+
     def test_zaljevo_district(self):
         for text in ('Сдаются апартаменты в районе ZALJEVO, БАР. 2 спальни 400 €','Бар, Заљево, 2 спальни, 400 €','Бар, Залjево 2 спальни 400 €'.replace('j','ј'),'Бар, Zaljevo'):
             self.assertEqual(parse(text)['district'],'Заљево',text)
