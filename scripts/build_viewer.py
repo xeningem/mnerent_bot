@@ -37,7 +37,7 @@ function load(file) {
     const src = new DOMParser().parseFromString(String(reader.result), 'text/html');   // разбор не выполняет скрипты
     const list = src.getElementById('list');
     if (!list || !list.querySelector('article')) return fail('В файле нет объявлений. Нужен файл, который прислал бот командой /file.');
-    src.querySelectorAll('script,iframe,object,embed,link,meta').forEach(n => n.remove());
+    src.querySelectorAll('script,noscript,.viewer-hint,iframe,object,embed,link,meta').forEach(n => n.remove());
     src.querySelectorAll('*').forEach(n => [...n.attributes].forEach(a => { if (/^on/i.test(a.name)) n.removeAttribute(a.name); }));
     const doc = $$('doc');
     doc.replaceChildren();

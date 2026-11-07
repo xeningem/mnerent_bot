@@ -733,6 +733,8 @@ def card(row):
             ''.join('\n' + x for x in history))[:4000]
 
 
+VIEWER_URL = 'https://xeningem.github.io/mnerent_bot/'
+
 EXPORT_CSS = """
 :root{color-scheme:light dark;--bg:#fafafa;--fg:#1d1d1f;--mute:#6b6b70;--line:#dcdce0;--card:#fff;--accent:#0a66c2;--star:#e0a000}
 @media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececf0;--mute:#9a9aa2;--line:#33333a;--card:#1f1f23;--accent:#6cb2ff;--star:#f2c038}}
@@ -804,7 +806,8 @@ def export_html(rows, filters, generated=None):
              f'<h1>Аренда в Черногории: {len(rows)}</h1>'
              f'<p class="mute">{e(" · ".join(x for x in summary if x))}'
              + (f' · <span class="star">★</span> в избранном: {stars}' if stars else '')
-             + f'<br>Сформировано {generated:%Y-%m-%d %H:%M} UTC. Условия и доступность уточняйте у автора.</p>']
+             + f'<br>Сформировано {generated:%Y-%m-%d %H:%M} UTC. Условия и доступность уточняйте у автора.</p>'
+             f'<p class="mute viewer-hint">Не работают поиск и фильтры? Откройте <a href="{VIEWER_URL}">{VIEWER_URL}</a> в браузере и загрузите этот файл: он читается на устройстве и никуда не отправляется.</p>']
     if rows:
         # Telegram's built-in viewer does not run scripts, so the controls never appear there.
         parts.append('<noscript><p class="mute">Поиск, сортировка и фильтры не работают, потому что страница открыта без JavaScript (так бывает во встроенном просмотре Telegram). Откройте файл в программе, которая выполняет скрипты.</p></noscript>')

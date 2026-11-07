@@ -6,7 +6,7 @@ import os
 import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from core import ASK_PROMPTS, MAX_PAGE_SIZE, SOURCES, export_html, Store, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, scan_days, scan_due
+from core import ASK_PROMPTS, MAX_PAGE_SIZE, SOURCES, VIEWER_URL, export_html, Store, apply_choice, apply_text, card, card_buttons, filter_reasons, menu, message_author, message_links, scan_days, scan_due
 
 log = logging.getLogger('bar-rent')
 PROGRESS_EVERY = 500
@@ -150,7 +150,7 @@ async def bot_loop(db, days):
                 if not rows: await send(uid,'Пока нет кандидатов. Проверь /filters и /status.'); return
                 form = aiohttp.FormData()
                 form.add_field('chat_id',str(uid))
-                form.add_field('caption',f'Подходящих объявлений: {len(rows)}. Фильтры и сортировка не работают во встроенном просмотре Telegram: нужна программа, которая выполняет скрипты.')
+                form.add_field('caption',f'Подходящих объявлений: {len(rows)}. Фильтры и сортировка не работают во встроенном просмотре Telegram: чтобы они заработали, откройте {VIEWER_URL} в браузере и загрузите этот файл.')
                 form.add_field('document',export_html(rows,db.filters(uid)).encode(),filename=f'rent-{datetime.now(timezone.utc):%Y%m%d}.html',content_type='text/html')
                 async with http.post(f'https://api.telegram.org/bot{token}/sendDocument',data=form) as r:
                     if r.status!=200: log.warning('Bot: sendDocument не удался: %s',r.status)
