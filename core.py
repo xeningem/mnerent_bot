@@ -807,7 +807,7 @@ def export_html(rows, filters, generated=None):
              + f'<br>Сформировано {generated:%Y-%m-%d %H:%M} UTC. Условия и доступность уточняйте у автора.</p>']
     if rows:
         # Telegram's built-in viewer does not run scripts, so the controls never appear there.
-        parts.append('<noscript><p class="mute">Поиск, сортировка и фильтры не работают без JavaScript. Откройте файл в браузере: «Поделиться» → «Открыть в Safari».</p></noscript>')
+        parts.append('<noscript><p class="mute">Поиск, сортировка и фильтры не работают, потому что страница открыта без JavaScript (так бывает во встроенном просмотре Telegram). Откройте файл в программе, которая выполняет скрипты.</p></noscript>')
         parts.append('<div class="bar" id="bar" hidden><input type="search" id="q" placeholder="Поиск по тексту">'
                      '<select id="sort" aria-label="Сортировка"><option value="drop">Со снижением цены сверху</option><option value="new">Сначала новые</option><option value="cheap">Сначала дешевле</option>'
                      '<option value="dear">Сначала дороже</option><option value="beds">Больше спален</option></select>'
